@@ -214,8 +214,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     };
 
     // Build Z auto notes
-    const formulaParts: string[] = [];   // for HYPERLINK formula (multi-accepted)
-    const plainParts: string[] = [];     // for plain text notes
+    const plainParts: string[] = [];     // for plain text auto-notes
 
     // Condition 1: multi-accepted (2+ accepted invoices)
     if (isMultiInvoice) {
@@ -223,15 +222,10 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       const invParts: string[] = [];
       for (let n = 1; n <= count; n++) {
         const sinv = sortedInvoices[n - 1];
-        const pdfUrl = sinv.file?.fileName ? HEYPROS_FILE_BASE + sinv.file.fileName : null;
         const amtStr = "$" + (sinv.amount / 100).toFixed(2);
-        if (pdfUrl) {
-          invParts.push(`"Inv ${n}: ${amtStr} " & HYPERLINK("${pdfUrl}","View PDF")`);
-        } else {
-          invParts.push(`"Inv ${n}: ${amtStr} (no PDF)"`);
-        }
+        invParts.push(`Inv ${n}: ${amtStr}`);
       }
-      formulaParts.push(`"⚠️ ${count} accepted invoices | " & ${invParts.join(' & " | " & ')}`);
+      plainParts.push(`ℹ️ ${count} accepted invoices (${invParts.join(", ")}) — download PDFs from HeyPros`);
     }
 
     // Condition 2: rejected invoices
@@ -271,15 +265,8 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     // Condition 9: extra row beyond filtered HP list
     if (hpIdx >= filteredList.length && filteredList.length > 0) plainParts.push("⚠️ No HeyPros WO for this row");
 
-    // Assemble Z value
-    if (formulaParts.length > 0 && plainParts.length > 0) {
-      // Combine formula parts with plain text
-      values.Z = `=${formulaParts.join(' & " | " & ')} & " | ${plainParts.join(" | ")}"`;
-    } else if (formulaParts.length > 0) {
-      values.Z = `=${formulaParts.join(' & " | " & ')}`;
-    } else {
-      values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
-    }
+    // Assemble Z value — plain text only, joined with pipe separator
+    values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
 
     updates.push({ rowIndex, values });
   }

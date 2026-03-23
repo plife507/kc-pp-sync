@@ -246,7 +246,7 @@ describe("Multi-invoice handling", () => {
   const HEYPROS_FILE_BASE = "https://hey-pros-api.birdsdontexist.com/files/";
 
   function buildMultiInvoiceNote(
-    invoices: Array<{ amount: number; file?: { fileName: string } | null; hashidNumeric: string | number }>,
+    invoices: Array<{ amount: number; hashidNumeric: string | number }>,
   ): string {
     const sorted = invoices.slice().sort((a, b) => {
       const numA = typeof a.hashidNumeric === "number" ? a.hashidNumeric : parseInt(String(a.hashidNumeric ?? "0"), 10);
@@ -254,41 +254,39 @@ describe("Multi-invoice handling", () => {
       return numB - numA;
     });
     const count = sorted.length;
-    const parts: string[] = [];
+    const invParts: string[] = [];
     for (let n = 1; n <= count; n++) {
       const inv = sorted[n - 1];
-      const pdfUrl = inv.file?.fileName ? HEYPROS_FILE_BASE + inv.file.fileName : null;
       const amtStr = "$" + (inv.amount / 100).toFixed(2);
-      if (pdfUrl) {
-        parts.push(`"Inv ${n}: ${amtStr} " & HYPERLINK("${pdfUrl}","View PDF")`);
-      } else {
-        parts.push(`"Inv ${n}: ${amtStr} (no PDF)"`);
-      }
+      invParts.push(`Inv ${n}: ${amtStr}`);
     }
-    return `="⚠️ ${count} invoices | " & ${parts.join(' & " | " & ')}`;
+    return `ℹ️ ${count} accepted invoices (${invParts.join(", ")}) — download PDFs from HeyPros`;
   }
 
-  it("builds correct note formula for 2 invoices with PDFs", () => {
+  it("builds plain text note for 2 invoices", () => {
     const invoices = [
-      { hashidNumeric: "100", amount: 5000, file: { fileName: "a.pdf" } },
-      { hashidNumeric: "200", amount: 8000, file: { fileName: "b.pdf" } },
+      { hashidNumeric: "100", amount: 5000 },
+      { hashidNumeric: "200", amount: 8000 },
     ];
     const note = buildMultiInvoiceNote(invoices);
-    assert.ok(note.startsWith('="⚠️ 2 invoices | "'));
+    assert.ok(note.includes("2 accepted invoices"));
     assert.ok(note.includes("Inv 1: $80.00"));
     assert.ok(note.includes("Inv 2: $50.00"));
-    assert.ok(note.includes('HYPERLINK("https://hey-pros-api.birdsdontexist.com/files/b.pdf","View PDF")'));
-    assert.ok(note.includes('HYPERLINK("https://hey-pros-api.birdsdontexist.com/files/a.pdf","View PDF")'));
+    assert.ok(note.includes("download PDFs from HeyPros"));
+    assert.ok(!note.includes("HYPERLINK"));
   });
 
-  it("builds correct note formula when some invoices have no PDF", () => {
+  it("builds plain text note for 3 invoices", () => {
     const invoices = [
-      { hashidNumeric: "100", amount: 5000, file: null },
-      { hashidNumeric: "200", amount: 8000, file: { fileName: "b.pdf" } },
+      { hashidNumeric: "100", amount: 5000 },
+      { hashidNumeric: "200", amount: 8000 },
+      { hashidNumeric: "300", amount: 3000 },
     ];
     const note = buildMultiInvoiceNote(invoices);
-    assert.ok(note.includes('(no PDF)'));
-    assert.ok(note.includes('HYPERLINK'));
+    assert.ok(note.includes("3 accepted invoices"));
+    assert.ok(note.includes("Inv 1:"));
+    assert.ok(note.includes("Inv 2:"));
+    assert.ok(note.includes("Inv 3:"));
   });
 
   it("computes total amount across all invoices", () => {
