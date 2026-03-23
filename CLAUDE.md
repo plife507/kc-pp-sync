@@ -1,6 +1,6 @@
 # CLAUDE.md — KC PP Sync
 
-Last updated: 2026-03-23
+Last updated: 2026-03-23 (v1.0.0)
 
 ## Purpose
 KC PP Sync is a Google Cloud Function that syncs job and payment data from Jobber + HeyPros APIs into a Google Sheet for KC Power Clean's subcontractor payment operations. Runs hourly via Cloud Scheduler.
@@ -20,10 +20,9 @@ src/
     types.ts           Shared interfaces (HeyProsJobDetail, JobberPaidJob)
 
 test/
-  matcher.test.ts      Legacy matcher tests (may need cleanup)
-  output-sheet.test.ts Auto-column, multi-invoice, auto-notes, round-robin tests
+  output-sheet.test.ts Auto-column, multi-invoice, auto-notes, round-robin tests (41 tests)
 
-dist/                  Compiled output (pre-built, gcp-build skips tsc)
+dist/                  Compiled output (tracked in git, gcp-build is no-op)
 references/            Jobber schema docs, HeyPros API reference links
 ```
 
@@ -45,7 +44,7 @@ gcloud functions deploy kc-pp-sync \
 
 ## How the Sync Works
 
-1. Read Job #s from column F of the target month tab
+1. Read Job #s from column F (F2:F500) of the target month tab
 2. Fetch Jobber jobs/invoices by job number (GraphQL)
 3. Fetch HeyPros WOs by purchaseOrder match (GraphQL, paginate all pages)
 4. **Filter HeyPros WOs by target month** (installationStarts date must fall within the tab's month)
@@ -100,7 +99,7 @@ HeyPros invoices have 4 known statuses:
 
 Multi-invoice behavior:
 - 1 accepted: T = HYPERLINK "View PDF", R = amount
-- 2+ accepted: T = "See Auto Note", R = sum, Z = HYPERLINK formula listing all
+- 2+ accepted: T = "See Auto Note", R = sum, Z = plain text listing amounts + "download PDFs from HeyPros"
 - 0 accepted: T = empty, R = empty
 
 ## Month-Filtered WO Assignment
@@ -155,4 +154,4 @@ Z is rebuilt from scratch every sync. Conditions joined with " | ":
 - Manual columns: B, F, S, U, V, W, X, Y
 - Conditional formatting rules (37 per tab + U "No Payment" + R≠S pink)
 - Data validations (7 per tab)
-- `gcp-build` script behavior
+- `gcp-build` script behavior (must remain `"true"` — no-op, uses pre-built dist)
