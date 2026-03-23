@@ -15,36 +15,6 @@ export interface JobberPaidJob {
   invoiceWebUri?: string;
 }
 
-/** Raw Jobber GraphQL invoice node (before normalization). */
-export interface JobberInvoiceNode {
-  id: string;
-  invoiceNumber: string;
-  subject: string;
-  invoiceStatus: string;
-  issuedDate: string | null;
-  receivedDate: string | null;
-  amounts: {
-    paymentsTotal: number | null;
-    total: number;
-  };
-  jobs: {
-    nodes: {
-      jobNumber: string | null;
-      client: { name: string } | null;
-    }[];
-  };
-}
-
-export interface JobberInvoicesResponse {
-  invoices: {
-    nodes: JobberInvoiceNode[];
-    pageInfo: {
-      hasNextPage: boolean;
-      endCursor: string | null;
-    };
-    totalCount: number;
-  };
-}
 
 export interface HeyProsJobDetail {
   hashid: string;

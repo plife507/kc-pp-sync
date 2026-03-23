@@ -3,7 +3,7 @@ import { google } from "googleapis";
 export async function readOutputSheetJobNumbers(
   spreadsheetId: string,
   tab: string = "Sheet1",
-  range: string = "F2:F200",
+  range: string = "F2:F500",
 ): Promise<Array<{ rowIndex: number; jobNumber: string }>> {
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({

@@ -79,7 +79,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
   const outputRows = await readOutputSheetJobNumbers(
     config.sheets.spreadsheetId,
     config.sheets.sheetsTab,
-    "F2:F200",
+    "F2:F500",
   );
   if (outputRows.length === 0) {
     console.log("  No job numbers found — nothing to sync");
