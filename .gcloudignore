@@ -1,0 +1,14 @@
+node_modules/
+.git/
+test/
+src/
+fixtures/
+phases/
+*.md
+*.test.ts
+tsconfig.json
+.env
+.env.example
+.gitignore
+CLAUDE_TASK.md
+TODO.md

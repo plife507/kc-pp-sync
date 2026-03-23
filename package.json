@@ -1,0 +1,23 @@
+{
+  "name": "kc-pp-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/function.js",
+  "scripts": {
+
+    "build": "tsc",
+    "gcp-build": "npm run build",
+    "test": "tsx --test test/*.test.ts",
+    "local": "npx functions-framework --target=kcPPSync --source=dist/"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^5.0.2",
+    "googleapis": "^171.4.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0"
+  }
+}
