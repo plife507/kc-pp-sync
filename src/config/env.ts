@@ -22,7 +22,7 @@ export interface Config {
 function currentMonthTabName(): string {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Panama",
+    timeZone: "America/Los_Angeles",
     month: "long",
     year: "numeric",
   }).formatToParts(now);
