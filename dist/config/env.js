@@ -1,7 +1,7 @@
 function currentMonthTabName() {
     const now = new Date();
     const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/Los_Angeles",
+        timeZone: "America/Panama",
         month: "long",
         year: "numeric",
     }).formatToParts(now);
@@ -18,8 +18,8 @@ export function loadConfig() {
     };
     return {
         heypros: {
-            graphqlUrl: required("HEYPROS_GRAPHQL_URL"),
-            tenant: required("HEYPROS_TENANT"),
+            graphqlUrl: process.env.HEYPROS_GRAPHQL_URL ?? "https://hey-pros-api.birdsdontexist.com/graphql",
+            tenant: process.env.HEYPROS_TENANT ?? "kc-power-clean.heypros.com",
             email: required("HEYPROS_EMAIL"),
             password: required("HEYPROS_PASSWORD"),
         },
@@ -30,7 +30,7 @@ export function loadConfig() {
             syncLookbackDays: parseInt(process.env.SYNC_LOOKBACK_DAYS ?? "7", 10),
         },
         sheets: {
-            spreadsheetId: process.env.GOOGLE_SHEETS_DEFAULT_ID || process.env.GOOGLE_SHEETS_ID || "1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q",
+            spreadsheetId: process.env.SPREADSHEET_ID || process.env.GOOGLE_SHEETS_DEFAULT_ID || process.env.GOOGLE_SHEETS_ID || "1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q",
             sheetsTab: process.env.SHEETS_TAB ?? currentMonthTabName(),
             dryRun: process.env.SHEETS_DRY_RUN === "true",
         },
