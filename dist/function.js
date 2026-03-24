@@ -229,6 +229,18 @@ async function runSourceSheetFlow(config) {
             plainParts.push("⚠️ No HeyPros WO for this row");
         // Assemble Z value — plain text only, joined with pipe separator
         values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
+        // PROTECT MANUAL DATA: When no WO found in HeyPros, do NOT overwrite
+        // columns that Nathan manually enters for pre-HeyPros jobs:
+        // A (Date), C (Company Name), D (Partner Owner), Q (HP Invoice #),
+        // R (Sub Invoice Amount), T (Contractor Invoice PDF)
+        if (heyProsList.length === 0) {
+            delete values.A;
+            delete values.C;
+            delete values.D;
+            delete values.Q;
+            delete values.R;
+            delete values.T;
+        }
         updates.push({ rowIndex, values });
     }
     // 5. Batch update auto columns
