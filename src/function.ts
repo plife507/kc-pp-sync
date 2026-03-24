@@ -182,7 +182,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
           return numB - numA;
         })[0]
       : undefined;
-    const contractor = heyPros?.attachedContractors?.[0] ?? heyPros?.ostensibleWinnerUser ?? null;
+    const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
 
     const values: Record<string, string> = {
       A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",

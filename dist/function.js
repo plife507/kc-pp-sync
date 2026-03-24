@@ -152,7 +152,7 @@ async function runSourceSheetFlow(config) {
                 return numB - numA;
             })[0]
             : undefined;
-        const contractor = heyPros?.attachedContractors?.[0] ?? heyPros?.ostensibleWinnerUser ?? null;
+        const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
         const values = {
             A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
             C: contractor?.companyName ?? "",
