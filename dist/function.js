@@ -237,6 +237,7 @@ async function runSourceSheetFlow(config) {
             delete values.A;
             delete values.C;
             delete values.D;
+            delete values.E;
             delete values.Q;
             delete values.R;
             delete values.T;
