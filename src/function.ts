@@ -9,7 +9,7 @@ import { loadConfig } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns } from "./adapters/sheets.js";
 import { HEADER_ROW, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -79,7 +79,6 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
   const outputRows = await readOutputSheetJobNumbers(
     config.sheets.spreadsheetId,
     config.sheets.sheetsTab,
-    "F2:F500",
   );
   if (outputRows.length === 0) {
     console.log("  No job numbers found — nothing to sync");
@@ -124,14 +123,14 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
   }
 
   // 4. Build per-row updates (auto columns only)
-  const updates: Array<{ rowIndex: number; values: Record<string, string> }> = [];
+  const updates: Array<{ rowIndex: number; values: Record<string, string>; _invoiceNumber?: string }> = [];
 
   // Parse target month from tab name for month-filtered WO assignment
   const tabMonth = parseTabMonth(config.sheets.sheetsTab);
 
   const heyProsAssignmentIndex = new Map<string, number>();
 
-  for (const { rowIndex, jobNumber } of outputRows) {
+  for (const { rowIndex, jobNumber, existingInvoiceValue } of outputRows) {
     const jobberRecords = jobberByNumber.get(jobNumber) ?? [];
     const heyProsList = heyProsByPO.get(jobNumber) ?? [];
 
@@ -184,6 +183,9 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       : undefined;
     const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
 
+    // Check if Invoice # column has "-" in the sheet (manual hold — skip invoice data sync)
+    const isManualInvoiceHold = existingInvoiceValue === "-";
+
     const values: Record<string, string> = {
       A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
       C: contractor?.companyName ?? "",
@@ -198,13 +200,6 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
         ? `=HYPERLINK("${inv.clientWebUri}","${(inv.clientName ?? "").replace(/"/g, '""')}")`
         : inv?.clientName ?? "",
       K: inv?.division ?? "",
-      L: inv?.invoiceWebUri && inv.invoiceNumber
-        ? `=HYPERLINK("${inv.invoiceWebUri}","${inv.invoiceNumber}")`
-        : inv?.invoiceNumber ?? "",
-      M: inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "",
-      N: inv?.issuedDate ? formatDate(inv.issuedDate) : "",
-      O: inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "",
-      P: inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "",
       Q: formatHeyProsId(hpInvoiceHashidNumeric),
       R: acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars),
       T: acceptedInvoices.length === 0 ? ""
@@ -212,6 +207,18 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
         : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '',
       Z: "",
     };
+
+    // Only populate invoice columns (L, M, N, O, P) when NOT in manual hold mode
+    if (!isManualInvoiceHold) {
+      values.L = inv?.invoiceWebUri && inv.invoiceNumber
+        ? `=HYPERLINK("${inv.invoiceWebUri}","${inv.invoiceNumber}")`
+        : inv?.invoiceNumber ?? "";
+      values.M = inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "";
+      values.N = inv?.issuedDate ? formatDate(inv.issuedDate) : "";
+      values.O = inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
+      values.P = inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
+    }
+    // When isManualInvoiceHold, M/N/O/P are not in values → won't be written
 
     // Build Z auto notes
     const plainParts: string[] = [];     // for plain text auto-notes
@@ -265,6 +272,9 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     // Condition 9: extra row beyond filtered HP list
     if (hpIdx >= filteredList.length && filteredList.length > 0) plainParts.push("⚠️ No HeyPros WO for this row");
 
+    // Condition 10: manual invoice hold
+    if (isManualInvoiceHold) plainParts.push("⏸️ Manual invoice hold (L = \"-\")");
+
     // Assemble Z value — plain text only, joined with pipe separator
     values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
 
@@ -282,7 +292,32 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       delete values.T;
     }
 
-    updates.push({ rowIndex, values });
+    // Track invoice number for shared invoice detection
+    const resolvedInvNum = inv?.invoiceNumber ?? "";
+    updates.push({ rowIndex, values, _invoiceNumber: resolvedInvNum });
+  }
+
+  // 5a. Shared invoice detection — flag rows sharing the same Jobber invoice #
+  const invoiceRowMap = new Map<string, number[]>();
+  for (const u of updates) {
+    const invNum = (u as any)._invoiceNumber as string;
+    if (invNum && invNum !== "-") {
+      const existing = invoiceRowMap.get(invNum) ?? [];
+      existing.push(u.rowIndex);
+      invoiceRowMap.set(invNum, existing);
+    }
+  }
+  for (const u of updates) {
+    const invNum = (u as any)._invoiceNumber as string;
+    if (invNum && invNum !== "-") {
+      const sharedRows = invoiceRowMap.get(invNum);
+      if (sharedRows && sharedRows.length > 1) {
+        const otherRows = sharedRows.filter(r => r !== u.rowIndex);
+        const note = `🔗 Shared Invoice #${invNum} (also on row${otherRows.length > 1 ? "s" : ""} ${otherRows.join(", ")})`;
+        u.values.Z = u.values.Z ? `${u.values.Z} | ${note}` : note;
+      }
+    }
+    delete (u as any)._invoiceNumber;  // clean up temp field
   }
 
   // 5. Batch update auto columns
@@ -293,6 +328,208 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     }
   } else {
     await batchUpdateAutoColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates);
+    console.log(`  Sheets: updated ${updates.length} rows`);
+  }
+
+  return { updateCount: updates.length, jobCount: uniqueJobNumbers.length };
+}
+
+/**
+ * Recurring tab flow: same Jobber + HeyPros lookups as monthly, but:
+ * - A (Date) auto-populated from HeyPros installationStarts (visit date)
+ * - L (Invoice #) is NOT overwritten — manually entered
+ * - M, N, O, P only filled when L has a value (invoice lookup)
+ * - HeyPros matching by HeyPros ID (col E) instead of chronological assignment
+ * - No month filtering on WOs
+ * - No GTP refresh
+ */
+async function runRecurringTabFlow(config: Config): Promise<{ updateCount: number; jobCount: number }> {
+  console.log("Step 1: Reading recurring tab rows...");
+  const rows = await readRecurringTabRows(
+    config.sheets.spreadsheetId,
+    config.sheets.sheetsTab,
+  );
+  if (rows.length === 0) {
+    console.log("  No job numbers found — nothing to sync");
+    return { updateCount: 0, jobCount: 0 };
+  }
+  const uniqueJobNumbers = [...new Set(rows.map(r => r.jobNumber))];
+  console.log(`  → ${rows.length} rows, ${uniqueJobNumbers.length} unique job numbers`);
+
+  // 2. Fetch Jobber jobs by number
+  const jobberJobs = await fetchJobberJobsByNumbers(config, uniqueJobNumbers);
+  console.log(`  → ${jobberJobs.length} Jobber records`);
+
+  // Index Jobber jobs by jobNumber
+  const jobberByNumber = new Map<string, JobberPaidJob[]>();
+  for (const j of jobberJobs) {
+    const existing = jobberByNumber.get(j.jobNumber) ?? [];
+    existing.push(j);
+    jobberByNumber.set(j.jobNumber, existing);
+  }
+
+  // 3. Fetch HeyPros jobs by purchase order
+  const heyProsJobs = await fetchJobsByPurchaseOrders(config, uniqueJobNumbers);
+  console.log(`  → ${heyProsJobs.length} HeyPros job matches`);
+
+  // Index HeyPros by hashidNumeric (normalized, no dashes) for direct lookup by col E
+  const heyProsByHashid = new Map<string, HeyProsJobDetail>();
+  for (const hp of heyProsJobs) {
+    const normalized = hp.hashidNumeric ? String(hp.hashidNumeric).replace(/-/g, "") : "";
+    if (normalized) heyProsByHashid.set(normalized, hp);
+  }
+
+  // Also index by PO for fallback
+  const heyProsByPO = new Map<string, HeyProsJobDetail[]>();
+  for (const hp of heyProsJobs) {
+    const po = hp.purchaseOrder?.trim();
+    if (po) {
+      const existing = heyProsByPO.get(po) ?? [];
+      existing.push(hp);
+      heyProsByPO.set(po, existing);
+    }
+  }
+
+  // 4. Build per-row updates
+  const updates: Array<{ rowIndex: number; values: Record<string, string> }> = [];
+
+  for (const { rowIndex, jobNumber, invoiceNumber, heyProsId } of rows) {
+    const jobberRecords = jobberByNumber.get(jobNumber) ?? [];
+
+    // Match HeyPros by the existing HeyPros ID in column E (direct match)
+    const normalizedId = heyProsId.replace(/-/g, "");
+    let heyPros = normalizedId ? heyProsByHashid.get(normalizedId) : undefined;
+
+    // Fallback: if no direct match, try PO list (first unassigned)
+    if (!heyPros) {
+      const poList = heyProsByPO.get(jobNumber) ?? [];
+      if (poList.length > 0) heyPros = poList[0];
+    }
+
+    const allInvoices = heyPros?.jobInvoices ?? [];
+    const KNOWN_STATUSES = ["Accepted", "Rejected", "Canceled", "Pending Approval"];
+    const acceptedInvoices = allInvoices.filter(inv => inv.status?.label === "Accepted");
+    const rejectedInvoices = allInvoices.filter(inv => inv.status?.label === "Rejected");
+    const canceledInvoices = allInvoices.filter(inv => inv.status?.label === "Canceled");
+    const pendingInvoices = allInvoices.filter(inv => inv.status?.label === "Pending Approval");
+    const unknownInvoices = allInvoices.filter(inv =>
+      inv.status?.label != null && !KNOWN_STATUSES.includes(inv.status.label)
+    );
+
+    const sortedInvoices = acceptedInvoices.slice().sort((a, b) => {
+      const numA = typeof a.hashidNumeric === "number" ? a.hashidNumeric : parseInt(String(a.hashidNumeric ?? "0"), 10);
+      const numB = typeof b.hashidNumeric === "number" ? b.hashidNumeric : parseInt(String(b.hashidNumeric ?? "0"), 10);
+      return numB - numA;
+    });
+    const hpInvoice = sortedInvoices.length > 0 ? sortedInvoices[0] : undefined;
+    const isMultiInvoice = acceptedInvoices.length > 1;
+    const totalAmountDollars = acceptedInvoices.reduce((sum, inv) => sum + inv.amount, 0) / 100;
+
+    const hpInvoiceHashidNumeric = hpInvoice?.hashidNumeric ?? "";
+    const hpInvoiceAmountDollars = hpInvoice ? formatAmount(hpInvoice.amount) : "";
+    const hpPdfUrl = hpInvoice?.file?.fileName
+      ? `${HEYPROS_FILE_BASE}${hpInvoice.file.fileName}`
+      : "";
+
+    // Pick Jobber record — for recurring, match by invoice number if provided
+    const isRecurringManualHold = invoiceNumber === "-";
+    let inv: JobberPaidJob | undefined;
+    if (invoiceNumber && !isRecurringManualHold) {
+      // Match by specific invoice number
+      inv = jobberRecords.find(j => j.invoiceNumber === invoiceNumber);
+      if (!inv) {
+        // Try without leading zeros or other normalization
+        inv = jobberRecords.find(j => parseInt(j.invoiceNumber, 10) === parseInt(invoiceNumber, 10));
+      }
+    }
+    // For job-level fields, use any Jobber record for this job
+    const jobRecord = jobberRecords.length > 0 ? jobberRecords[0] : undefined;
+
+    const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
+
+    const values: Record<string, string> = {
+      // Date from HeyPros (installationStarts = visit/service date)
+      A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
+      // Job-level fields (from Jobber job, not invoice-specific)
+      C: contractor?.companyName ?? "",
+      D: contractor ? `${contractor.firstName} ${contractor.lastName}`.trim() : "",
+      E: heyPros?.hashid && heyPros.hashidNumeric
+        ? `=HYPERLINK("https://kc-power-clean.heypros.com/job/${heyPros.hashid}","${formatHeyProsId(heyPros.hashidNumeric)}")`
+        : formatHeyProsId(heyPros?.hashidNumeric ?? ""),
+      G: jobRecord?.jobberWebUri ? `=HYPERLINK("${jobRecord.jobberWebUri}","View Job")` : "",
+      H: jobRecord?.jobStatus ? displayJobStatus(jobRecord.jobStatus) : "",
+      I: jobRecord?.jobType ? displayJobType(jobRecord.jobType) : "",
+      J: jobRecord?.clientWebUri && jobRecord.clientName
+        ? `=HYPERLINK("${jobRecord.clientWebUri}","${(jobRecord.clientName ?? "").replace(/"/g, '""')}")`
+        : jobRecord?.clientName ?? "",
+      K: jobRecord?.division ?? "",
+      // HeyPros invoice fields
+      Q: formatHeyProsId(hpInvoiceHashidNumeric),
+      R: acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars),
+      T: acceptedInvoices.length === 0 ? ""
+        : isMultiInvoice ? "See Auto Note"
+        : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '',
+    };
+
+    // Invoice-specific fields — ONLY when Invoice # (L) is provided and NOT manual hold
+    if (invoiceNumber && !isRecurringManualHold && inv) {
+      values.M = inv.amount === 0 ? "" : String(inv.amount);
+      values.N = inv.issuedDate ? formatDate(inv.issuedDate) : "";
+      values.O = inv.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
+      values.P = inv.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
+    } else if (!isRecurringManualHold) {
+      // No invoice # or no match — leave M, N, O, P blank
+      values.M = "";
+      values.N = "";
+      values.O = "";
+      values.P = "";
+    }
+    // When isRecurringManualHold, M/N/O/P are not set → won't be written
+
+    // Auto notes
+    const plainParts: string[] = [];
+    if (isMultiInvoice) {
+      const count = sortedInvoices.length;
+      const invParts: string[] = [];
+      for (let n = 0; n < count; n++) {
+        const sinv = sortedInvoices[n];
+        const amtStr = "$" + (sinv.amount / 100).toFixed(2);
+        invParts.push(`Inv ${n + 1}: ${amtStr}`);
+      }
+      plainParts.push(`ℹ️ ${count} accepted invoices (${invParts.join(", ")}) — download PDFs from HeyPros`);
+    }
+    for (const rinv of rejectedInvoices) plainParts.push(`⚠️ Rejected: $${(rinv.amount / 100).toFixed(2)}`);
+    for (const cinv of canceledInvoices) plainParts.push(`⚠️ Canceled: $${(cinv.amount / 100).toFixed(2)}`);
+    for (const pinv of pendingInvoices) plainParts.push(`⏳ Pending: $${(pinv.amount / 100).toFixed(2)}`);
+    for (const uinv of unknownInvoices) plainParts.push(`⚠️ Unknown status '${uinv.status?.label}': $${(uinv.amount / 100).toFixed(2)}`);
+    if (!heyPros) plainParts.push("⚠️ WO# not found in HeyPros");
+    if (jobberRecords.length === 0) plainParts.push("⚠️ Job# not found in Jobber");
+    if (invoiceNumber && !isRecurringManualHold && !inv) plainParts.push(`⚠️ Invoice #${invoiceNumber} not found in Jobber`);
+    if (isRecurringManualHold) plainParts.push("⏸️ Manual invoice hold (L = \"-\")");
+    values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
+
+    // Protect manual data when no HeyPros match
+    if (!heyPros) {
+      delete values.C;
+      delete values.D;
+      delete values.E;
+      delete values.Q;
+      delete values.R;
+      delete values.S;
+      delete values.T;
+    }
+
+    updates.push({ rowIndex, values });
+  }
+
+  // 5. Batch update
+  if (config.sheets.dryRun) {
+    console.log("\n  Sheets [DRY RUN] — would update these rows:");
+    for (const u of updates) {
+      console.log(`    Row ${u.rowIndex}: ${JSON.stringify(u.values)}`);
+    }
+  } else {
+    await batchUpdateRecurringColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates);
     console.log(`  Sheets: updated ${updates.length} rows`);
   }
 
@@ -313,14 +550,41 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       config.sheets.sheetsTab = bodyTab;
     }
 
-    const { updateCount, jobCount } = await runSourceSheetFlow(config);
+    // Detect recurring tab (ends with " - R")
+    const isRecurringTab = config.sheets.sheetsTab.endsWith(" - R");
+
+    let updateCount: number;
+    let jobCount: number;
+    let gtpCount = 0;
+
+    if (isRecurringTab) {
+      console.log(`Recurring tab detected: ${config.sheets.sheetsTab}`);
+      const result = await runRecurringTabFlow(config);
+      updateCount = result.updateCount;
+      jobCount = result.jobCount;
+      // No GTP refresh for recurring tabs
+    } else {
+      const result = await runSourceSheetFlow(config);
+      updateCount = result.updateCount;
+      jobCount = result.jobCount;
+
+      // Refresh GTP $ tab after sync (monthly tabs only)
+      if (!config.sheets.dryRun) {
+        console.log("Refreshing GTP $ tab...");
+        gtpCount = await refreshGTPTab(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+        console.log(`  GTP $: ${gtpCount} rows`);
+      }
+    }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const summary = {
       status: "ok",
       elapsed: `${elapsed}s`,
+      tab: config.sheets.sheetsTab,
+      recurring: isRecurringTab,
       jobNumbers: jobCount,
       updatedRows: updateCount,
+      gtpRows: gtpCount,
       spreadsheetId: config.sheets.dryRun ? null : config.sheets.spreadsheetId,
     };
     console.log(`Done in ${elapsed}s`, JSON.stringify(summary));
