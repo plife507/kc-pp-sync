@@ -252,6 +252,51 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
     }
     return gtpRows.length;
 }
+/**
+ * Apply black text formatting to hyperlink columns so links render as
+ * black underlined text instead of default Google blue.
+ *
+ * New layout link cols: E(4), G(6), J(9), R(17)
+ * Legacy/recurring link cols: E(4), G(6), J(9), T(19)
+ */
+export async function formatLinkColumns(spreadsheetId, tab, rowCount) {
+    const sheets = await getSheetsClient();
+    // Get sheet ID
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets.properties",
+    });
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === tab);
+    if (!sheet)
+        return;
+    const sheetId = sheet.properties.sheetId;
+    const useNew = isNewLayout(tab);
+    // PDF column: R(17) on new layout, T(19) on legacy/recurring
+    const linkCols = useNew ? [4, 6, 9, 17] : [4, 6, 9, 19];
+    const requests = linkCols.map((col) => ({
+        repeatCell: {
+            range: {
+                sheetId,
+                startRowIndex: 1,
+                endRowIndex: rowCount + 1,
+                startColumnIndex: col,
+                endColumnIndex: col + 1,
+            },
+            cell: {
+                userEnteredFormat: {
+                    textFormat: {
+                        foregroundColor: { red: 0, green: 0, blue: 0 },
+                    },
+                },
+            },
+            fields: "userEnteredFormat.textFormat.foregroundColor",
+        },
+    }));
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests },
+    });
+}
 async function getSheetsClient() {
     const auth = new google.auth.GoogleAuth({
         scopes: ["https://www.googleapis.com/auth/spreadsheets"],

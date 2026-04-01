@@ -7,7 +7,7 @@
 import { loadConfig } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 const JOB_STATUS_DISPLAY = {
@@ -392,6 +392,9 @@ async function runSourceSheetFlow(config) {
     else {
         await batchUpdateAutoColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates);
         console.log(`  Sheets: updated ${updates.length} rows`);
+        // Apply black text formatting to hyperlink columns (E, G, J, R/T)
+        await formatLinkColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates.length > 0 ? Math.max(...updates.map(u => u.rowIndex)) : 50);
+        console.log("  Link columns: formatted");
     }
     return { updateCount: updates.length, jobCount: uniqueJobNumbers.length };
 }
@@ -579,6 +582,9 @@ async function runRecurringTabFlow(config) {
     else {
         await batchUpdateRecurringColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates);
         console.log(`  Sheets: updated ${updates.length} rows`);
+        // Apply black text formatting to hyperlink columns (E, G, J, T)
+        await formatLinkColumns(config.sheets.spreadsheetId, config.sheets.sheetsTab, updates.length > 0 ? Math.max(...updates.map(u => u.rowIndex)) : 50);
+        console.log("  Link columns: formatted");
     }
     return { updateCount: updates.length, jobCount: uniqueJobNumbers.length };
 }

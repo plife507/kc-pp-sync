@@ -54,3 +54,11 @@ export declare function batchUpdateAutoColumns(spreadsheetId: string, tab: strin
  *                        All Paid?/Invoice Status, Payment Status, Payment Tracking
  */
 export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string): Promise<number>;
+/**
+ * Apply black text formatting to hyperlink columns so links render as
+ * black underlined text instead of default Google blue.
+ *
+ * New layout link cols: E(4), G(6), J(9), R(17)
+ * Legacy/recurring link cols: E(4), G(6), J(9), T(19)
+ */
+export declare function formatLinkColumns(spreadsheetId: string, tab: string, rowCount: number): Promise<void>;
