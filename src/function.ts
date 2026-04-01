@@ -9,8 +9,8 @@ import { loadConfig } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns } from "./adapters/sheets.js";
-import { HEADER_ROW, HEYPROS_FILE_BASE } from "./config/constants.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout } from "./adapters/sheets.js";
+import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
@@ -58,15 +58,33 @@ function formatAmount(cents: number): string {
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /**
- * Parse a tab name like "March 2026" into { month: 2 (0-indexed), year: 2026 }.
- * Returns null if the tab name doesn't match the expected format.
+ * Parse a tab name into { month, year }.
+ * Supports both formats:
+ *   - Legacy: "March 2026" → { month: 2, year: 2026 }
+ *   - New: "March" → { month: 2, year: <current year> }
+ * Returns null if the tab name doesn't match.
  */
 function parseTabMonth(tabName: string): { month: number; year: number } | null {
-  const match = tabName.match(/^(\w+)\s+(\d{4})$/);
-  if (!match) return null;
-  const monthIdx = MONTH_NAMES.indexOf(match[1]);
-  if (monthIdx === -1) return null;
-  return { month: monthIdx, year: parseInt(match[2], 10) };
+  // Try legacy format first: "Month Year"
+  const legacyMatch = tabName.match(/^(\w+)\s+(\d{4})$/);
+  if (legacyMatch) {
+    const monthIdx = MONTH_NAMES.indexOf(legacyMatch[1]);
+    if (monthIdx === -1) return null;
+    return { month: monthIdx, year: parseInt(legacyMatch[2], 10) };
+  }
+  // Try new format: just "Month"
+  const monthIdx = MONTH_NAMES.indexOf(tabName);
+  if (monthIdx !== -1) {
+    // Use current year in LA timezone (KC operates in LA)
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+    }).formatToParts(now);
+    const year = parseInt(parts.find(p => p.type === "year")?.value ?? String(now.getFullYear()), 10);
+    return { month: monthIdx, year };
+  }
+  return null;
 }
 
 /**
@@ -128,6 +146,9 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
   // Parse target month from tab name for month-filtered WO assignment
   const tabMonth = parseTabMonth(config.sheets.sheetsTab);
 
+  // Detect layout: new (March+) or legacy (Jan/Feb)
+  const useNewLayout = isNewLayout(config.sheets.sheetsTab);
+
   const heyProsAssignmentIndex = new Map<string, number>();
 
   for (const { rowIndex, jobNumber, existingInvoiceValue } of outputRows) {
@@ -183,9 +204,10 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       : undefined;
     const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
 
-    // Check if Invoice # column has "-" in the sheet (manual hold — skip invoice data sync)
-    const isManualInvoiceHold = existingInvoiceValue === "-";
+    // Legacy layout manual hold: check if Invoice # column has "-" in the sheet
+    const isManualInvoiceHold = !useNewLayout && existingInvoiceValue === "-";
 
+    // Common fields (same columns in both layouts: A–K)
     const values: Record<string, string> = {
       A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
       C: contractor?.companyName ?? "",
@@ -200,27 +222,95 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
         ? `=HYPERLINK("${inv.clientWebUri}","${(inv.clientName ?? "").replace(/"/g, '""')}")`
         : inv?.clientName ?? "",
       K: inv?.division ?? "",
-      Q: formatHeyProsId(hpInvoiceHashidNumeric),
-      R: acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars),
-      T: acceptedInvoices.length === 0 ? ""
-        : isMultiInvoice ? "See Auto Note"
-        : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '',
-      Z: "",
     };
 
-    // Only populate invoice columns (L, M, N, O, P) when NOT in manual hold mode
-    if (!isManualInvoiceHold) {
-      values.L = inv?.invoiceWebUri && inv.invoiceNumber
-        ? `=HYPERLINK("${inv.invoiceWebUri}","${inv.invoiceNumber}")`
-        : inv?.invoiceNumber ?? "";
-      values.M = inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "";
-      values.N = inv?.issuedDate ? formatDate(inv.issuedDate) : "";
-      values.O = inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
-      values.P = inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
-    }
-    // When isManualInvoiceHold, M/N/O/P are not in values → won't be written
+    if (useNewLayout) {
+      // ──────── NEW LAYOUT (March+): A–AM ────────
+      // L = # of Invoices, M = Total Invoiced, N = All Paid?
+      const allJobberInvoices = jobberRecords.flatMap(j =>
+        j.invoiceNumber ? [j] : []
+      );
+      // Deduplicate by invoiceNumber (same job may appear multiple times in jobberRecords)
+      const uniqueInvoices = new Map<string, JobberPaidJob>();
+      for (const j of allJobberInvoices) {
+        if (j.invoiceNumber && !uniqueInvoices.has(j.invoiceNumber)) {
+          uniqueInvoices.set(j.invoiceNumber, j);
+        }
+      }
+      const invoiceList = [...uniqueInvoices.values()];
 
-    // Build Z auto notes
+      values.L = invoiceList.length > 0 ? String(invoiceList.length) : "0";
+      values.M = invoiceList.length > 0
+        ? invoiceList.reduce((sum, j) => sum + j.amount, 0).toFixed(2)
+        : "";
+      const allPaid = invoiceList.length > 0 && invoiceList.every(j => j.invoiceStatus === "paid");
+      values.N = invoiceList.length === 0 ? "" : (allPaid ? "✅" : "❌");
+
+      // O = HeyPros Invoice # (was Q)
+      values.O = formatHeyProsId(hpInvoiceHashidNumeric);
+      // P = Sub Invoice Amount (was R)
+      values.P = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
+      // R = Contractor Invoice PDF (was T)
+      values.R = acceptedInvoices.length === 0 ? ""
+        : isMultiInvoice ? "See Auto Note"
+        : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '';
+
+      // Invoice Tracker Block (Y–AM): 5 slots × 3 cols
+      const trackerCols = [
+        ["Y", "Z", "AA"],   // slot 1
+        ["AB", "AC", "AD"], // slot 2
+        ["AE", "AF", "AG"], // slot 3
+        ["AH", "AI", "AJ"], // slot 4
+        ["AK", "AL", "AM"], // slot 5
+      ];
+      // Sort invoices by invoice number ascending (slot 1 = first/oldest)
+      const sortedJobberInvoices = invoiceList.slice().sort((a, b) => {
+        const numA = parseInt(a.invoiceNumber?.replace(/\D/g, "") ?? "0", 10);
+        const numB = parseInt(b.invoiceNumber?.replace(/\D/g, "") ?? "0", 10);
+        return numA - numB;
+      });
+      for (let slot = 0; slot < 5; slot++) {
+        const [colNum, colAmt, colPaid] = trackerCols[slot];
+        const ji = sortedJobberInvoices[slot];
+        if (ji) {
+          values[colNum] = ji.invoiceWebUri
+            ? `=HYPERLINK("${ji.invoiceWebUri}","${ji.invoiceNumber}")`
+            : ji.invoiceNumber;
+          values[colAmt] = ji.amount > 0 ? ji.amount.toFixed(2) : "";
+          values[colPaid] = ji.invoiceStatus === "paid" ? "✅" : "❌";
+        } else {
+          values[colNum] = "";
+          values[colAmt] = "";
+          values[colPaid] = "";
+        }
+      }
+
+      // X = Auto Notes (was Z)
+      values.X = "";
+
+    } else {
+      // ──────── LEGACY LAYOUT (Jan/Feb): A–Z ────────
+      values.Q = formatHeyProsId(hpInvoiceHashidNumeric);
+      values.R = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
+      values.T = acceptedInvoices.length === 0 ? ""
+        : isMultiInvoice ? "See Auto Note"
+        : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '';
+      values.Z = "";
+
+      // Only populate invoice columns (L, M, N, O, P) when NOT in manual hold mode
+      if (!isManualInvoiceHold) {
+        values.L = inv?.invoiceWebUri && inv.invoiceNumber
+          ? `=HYPERLINK("${inv.invoiceWebUri}","${inv.invoiceNumber}")`
+          : inv?.invoiceNumber ?? "";
+        values.M = inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "";
+        values.N = inv?.issuedDate ? formatDate(inv.issuedDate) : "";
+        values.O = inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
+        values.P = inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
+      }
+    }
+
+    // Auto notes column: X for new layout, Z for legacy
+    const autoNotesCol = useNewLayout ? "X" : "Z";
     const plainParts: string[] = [];     // for plain text auto-notes
 
     // Condition 1: multi-accepted (2+ accepted invoices)
@@ -272,24 +362,46 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     // Condition 9: extra row beyond filtered HP list
     if (hpIdx >= filteredList.length && filteredList.length > 0) plainParts.push("⚠️ No HeyPros WO for this row");
 
-    // Condition 10: manual invoice hold
+    // Condition 10: manual invoice hold (legacy only)
     if (isManualInvoiceHold) plainParts.push("⏸️ Manual invoice hold (L = \"-\")");
 
-    // Assemble Z value — plain text only, joined with pipe separator
-    values.Z = plainParts.length > 0 ? plainParts.join(" | ") : "";
+    // New layout extra notes
+    if (useNewLayout) {
+      const allJobberInvoices2 = jobberRecords.flatMap(j => j.invoiceNumber ? [j] : []);
+      const uniqueInvCount = new Set(allJobberInvoices2.map(j => j.invoiceNumber)).size;
+      if (uniqueInvCount > 5) {
+        plainParts.push(`⚠️ Job has ${uniqueInvCount} invoices — only first 5 shown in tracker`);
+      }
+      if (uniqueInvCount > 1) {
+        const paidCount = allJobberInvoices2.filter(j => j.invoiceStatus === "paid").length;
+        const unpaidCount = uniqueInvCount - paidCount;
+        if (unpaidCount > 0 && paidCount > 0) {
+          plainParts.push(`🔴 ${unpaidCount} of ${uniqueInvCount} client invoices unpaid`);
+        }
+      }
+    }
+
+    // Assemble auto notes — plain text only, joined with pipe separator
+    values[autoNotesCol] = plainParts.length > 0 ? plainParts.join(" | ") : "";
 
     // PROTECT MANUAL DATA: When no WO found in HeyPros, do NOT overwrite
-    // columns that Nathan manually enters for pre-HeyPros jobs:
-    // A (Date), C (Company Name), D (Partner Owner), Q (HP Invoice #),
-    // R (Sub Invoice Amount), T (Contractor Invoice PDF)
+    // columns that Nathan manually enters for pre-HeyPros jobs.
     if (heyProsList.length === 0) {
       delete values.A;
       delete values.C;
       delete values.D;
       delete values.E;
-      delete values.Q;
-      delete values.R;
-      delete values.T;
+      if (useNewLayout) {
+        // New layout: O (HP Invoice #), P (Sub Inv Amt), R (Contractor PDF)
+        delete values.O;
+        delete values.P;
+        delete values.R;
+      } else {
+        // Legacy layout: Q (HP Invoice #), R (Sub Inv Amt), T (Contractor PDF)
+        delete values.Q;
+        delete values.R;
+        delete values.T;
+      }
     }
 
     // Track invoice number for shared invoice detection
@@ -307,6 +419,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       invoiceRowMap.set(invNum, existing);
     }
   }
+  const notesCol = useNewLayout ? "X" : "Z";
   for (const u of updates) {
     const invNum = (u as any)._invoiceNumber as string;
     if (invNum && invNum !== "-") {
@@ -314,7 +427,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       if (sharedRows && sharedRows.length > 1) {
         const otherRows = sharedRows.filter(r => r !== u.rowIndex);
         const note = `🔗 Shared Invoice #${invNum} (also on row${otherRows.length > 1 ? "s" : ""} ${otherRows.join(", ")})`;
-        u.values.Z = u.values.Z ? `${u.values.Z} | ${note}` : note;
+        u.values[notesCol] = u.values[notesCol] ? `${u.values[notesCol]} | ${note}` : note;
       }
     }
     delete (u as any)._invoiceNumber;  // clean up temp field

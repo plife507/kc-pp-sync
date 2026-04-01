@@ -24,11 +24,10 @@ function currentMonthTabName(): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     month: "long",
-    year: "numeric",
   }).formatToParts(now);
   const month = parts.find(p => p.type === "month")?.value ?? "";
-  const year = parts.find(p => p.type === "year")?.value ?? "";
-  return `${month} ${year}`;
+  // New naming: just "March", "April", etc. (no year suffix)
+  return month;
 }
 
 export function loadConfig(): Config {
