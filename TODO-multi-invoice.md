@@ -115,15 +115,10 @@ All auto-populated from Jobber API. No manual input.
 **Goal:** Rename all tabs to new naming convention and consolidate recurring data.
 
 **Tasks:**
-- [ ] 0.1 Rename `March 2026` → `March`
-- [ ] 0.2 Merge EFRAIN - R + JASON - R into single `March - R` tab:
-  - Read all data from EFRAIN - R (41 rows)
-  - Read all data from JASON - R (if any rows exist)
-  - Create `March - R` tab with same 26-column header
-  - Write combined data sorted by date
-  - Preserve all manual/finance data during merge
-- [ ] 0.3 Rename `GTP $ - March` → `March - GTP $`
-- [ ] 0.4 Delete old `EFRAIN - R` and `JASON - R` tabs after merge verified
+- [x] 0.1 Rename `March 2026` → `March`
+- [x] 0.2 Merge EFRAIN - R + JASON - R into single `March - R` tab (44 rows, 42 Efrain + 2 Jason)
+- [x] 0.3 Rename `GTP $ - March` → `March - GTP $`
+- [x] 0.4 Delete old `EFRAIN - R` and `JASON - R` tabs after merge verified
 - [ ] 0.5 Update sync code tab detection:
   - `isRecurringTab` check: still detects ` - R` suffix ✅ (no change needed)
   - `parseTabMonth()`: update to parse `March` (no year) in addition to `March 2026` (backward compat for Jan/Feb)
@@ -143,7 +138,7 @@ All auto-populated from Jobber API. No manual input.
 **Goal:** Safely migrate manual data from old column positions to new positions on all monthly tabs.
 
 **Tasks:**
-- [ ] 1.1 On **March** tab only:
+- [x] 1.1 On **March** tab only:
   - Read entire sheet data (A:Z)
   - Extract manual/finance columns at old positions: S(18), U(20), V(21), W(22), X(23), Y(24)
   - Write extracted data to new positions: Q(16), S(18→new), T(19→new), U(20→new), V(21→new), W(23→new)
@@ -154,9 +149,9 @@ All auto-populated from Jobber API. No manual input.
     - Old W (col index 22) → New U (col index 20): shift LEFT 2
     - Old X (col index 23) → New V (col index 21): shift LEFT 2
     - Old Y (col index 24) → New W (col index 22): shift LEFT 2
-- [ ] 1.2 Clear old column positions that no longer hold the same data (O, P become new HeyPros cols; old positions of finance data get cleared after copy)
-- [ ] 1.3 Update headers row on March tab to new schema
-- [ ] 1.4 Add new headers for Y–AM (Invoice Tracker block)
+- [x] 1.2 Clear old column positions (full sheet rewrite)
+- [x] 1.3 Update headers row on March tab to new schema (39 cols A–AM)
+- [x] 1.4 Add new headers for Y–AM (Invoice Tracker block)
 - **Note:** January and February tabs are NOT migrated — they keep their current layout.
 
 **Gate:**
@@ -171,8 +166,8 @@ All auto-populated from Jobber API. No manual input.
 **Goal:** Update data validation dropdowns and conditional formatting to new column positions.
 
 **Tasks:**
-- [ ] 2.1 Delete old dropdown validations on old columns (U, V, W at old positions)
-- [ ] 2.2 Create new dropdown validations:
+- [x] 2.1 Delete old dropdown validations on old columns (V, W cleared)
+- [x] 2.2 Create new dropdown validations:
   - S (Payment Status): Good to Pay, NO CLIENT PAY, On Hold, Pending Approval in HP
   - T (Payment Tracking): PAID, AWAITING FOR PAYMENT
   - U (Payment Method): QBO-Billpay- ACH/Check, ACH - 9292
@@ -180,16 +175,16 @@ All auto-populated from Jobber API. No manual input.
   - I (Job Type): existing values — verify position unchanged
   - K (Division): existing values — verify position unchanged
   - N (All Paid?): ✅, ❌ (new — or auto-populated text, no dropdown needed)
-- [ ] 2.3 Update conditional formatting rules:
+- [x] 2.3 Update conditional formatting rules (38 rules rebuilt at new positions):
   - Delete all existing CF rules (they reference old column positions)
   - Recreate CF rules mapped to new column positions
   - Key CF rules: Payment Status colors, Payment Tracking colors, Review flag, Invoice Status indicators
-- [ ] 2.4 Format new columns:
+- [x] 2.4 Format new columns:
   - L (# of Invoices): number format, centered
   - M (Total Invoiced): currency ($#,##0.00)
   - N (All Paid?): centered
   - Y–AM: Invoice # = text, Amount = currency, Paid = centered
-- [ ] 2.5 Apply formatting to March tab only (Jan/Feb untouched)
+- [x] 2.5 Apply formatting to March tab only (Jan/Feb untouched)
 
 **Gate:**
 - [ ] Dropdowns work on new columns (test manual entry on a scratch row)
