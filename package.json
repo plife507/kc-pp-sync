@@ -1,13 +1,12 @@
 {
   "name": "kc-pp-sync",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/function.js",
   "scripts": {
-
     "build": "tsc",
-    "gcp-build": "npm run build",
+    "gcp-build": "true",
     "test": "tsx --test test/*.test.ts",
     "local": "npx functions-framework --target=kcPPSync --source=dist/"
   },

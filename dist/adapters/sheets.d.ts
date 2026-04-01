@@ -1,0 +1,56 @@
+/**
+ * Read job numbers from output sheet.
+ * For legacy tabs (Jan/Feb): also reads column L (Invoice #) for manual hold detection.
+ * For new tabs (March+): L is auto-populated "# of Invoices" — no manual hold via L.
+ */
+export declare function readOutputSheetJobNumbers(spreadsheetId: string, tab?: string): Promise<Array<{
+    rowIndex: number;
+    jobNumber: string;
+    existingInvoiceValue: string;
+}>>;
+/**
+ * NEW layout (March-forward): auto-populated columns in A–AM layout.
+ * Manual/finance columns NOT in this set: B (review), F (job#), Q (KCPC Released),
+ * S (Payment Status), T (Payment Tracking), U (Payment Method), V (Date of Payment), W (Notes).
+ */
+export declare const AUTO_COL_LETTERS_NEW: Set<string>;
+/**
+ * LEGACY layout (Jan/Feb): auto-populated columns in A–Z layout.
+ */
+export declare const AUTO_COL_LETTERS_LEGACY: Set<string>;
+export declare const RECURRING_AUTO_COL_LETTERS: Set<string>;
+/** Determine if a tab uses the new 39-column layout (March-forward) or legacy 26-column. */
+export declare function isNewLayout(tabName: string): boolean;
+/**
+ * Read Job # (col F) and Invoice # (col L) and HeyPros ID (col E) from a recurring tab.
+ */
+export declare function readRecurringTabRows(spreadsheetId: string, tab: string): Promise<Array<{
+    rowIndex: number;
+    jobNumber: string;
+    invoiceNumber: string;
+    heyProsId: string;
+}>>;
+export declare function batchUpdateRecurringColumns(spreadsheetId: string, tab: string, updates: Array<{
+    rowIndex: number;
+    values: Record<string, string>;
+}>): Promise<void>;
+export declare function batchUpdateAutoColumns(spreadsheetId: string, tab: string, updates: Array<{
+    rowIndex: number;
+    values: Record<string, string>;
+}>): Promise<void>;
+/**
+ * Refresh the GTP $ tab after a sync run.
+ * Reads the source month tab, filters for GTP-eligible rows, clears+rewrites the GTP tab.
+ *
+ * GTP criteria (new layout):
+ *   N (All Paid?) = "✅", S (Payment Status) = "Good to Pay",
+ *   T (Payment Tracking) = "AWAITING FOR PAYMENT"
+ *
+ * GTP criteria (legacy layout):
+ *   O (Jobber Invoice Status) = "Paid", U (Payment Status) = "Good to Pay",
+ *   V (Payment Tracking) = "AWAITING FOR PAYMENT"
+ *
+ * GTP $ output columns: Date, Company Name, PP Owner, Job #, Sub Invoice Amount,
+ *                        All Paid?/Invoice Status, Payment Status, Payment Tracking
+ */
+export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string): Promise<number>;

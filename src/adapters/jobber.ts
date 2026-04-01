@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Config } from "../config/env.js";
-import type { JobberPaidJob, JobberInvoiceNode, JobberInvoicesResponse } from "../config/types.js";
+import type { JobberPaidJob } from "../config/types.js";
 
 // =============================================================================
 // Throttle management ported from kc/jobber-cli/lib/core/throttle-manager.js
@@ -14,7 +14,7 @@ import type { JobberPaidJob, JobberInvoiceNode, JobberInvoicesResponse } from ".
 //   - waitIfNeeded: progress log every 2s
 //   - Budget warning at 80% usage
 //   - CostReference: learns actual costs (avg * 1.2 estimate), shares cache
-//     with jobber-cli at /data/.openclaw/workspace-aya-dev/kc/jobber-cli/.cache/query_costs.json
+//     with jobber-cli cost cache (shared when running locally)
 // =============================================================================
 
 // ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ function jwtExp(token: string): number | null {
 // KC_ENV_PATH is only writable in local dev (not Cloud Functions).
 // updateEnvFile() wraps writes in try/catch so failures are silent.
 const KC_ENV_PATH =
-  process.env.KC_ENV_PATH ?? "/data/.openclaw/workspace-aya-dev/kc/.env";
+  process.env.KC_ENV_PATH ?? "/tmp/kc.env";
 
 function loadEnvVar(key: string): string | undefined {
   try {
@@ -456,7 +456,7 @@ export class JobberAuth {
     if (!this.clientId || !this.clientSecret) {
       throw new Error(
         "Jobber OAuth refresh requires JOBBER_CLIENT_ID and JOBBER_CLIENT_SECRET " +
-          "(set in process.env or in /data/.openclaw/workspace-aya-dev/kc/.env)",
+          "(set JOBBER_CLIENT_ID and JOBBER_CLIENT_SECRET in process.env)",
       );
     }
     console.log("  Jobber: access token expired or expiring soon — refreshing…");
@@ -555,48 +555,6 @@ interface JobberGQLResponse<T> {
 
 // Hard cap: first:10 maximum (first:100 always exceeds 10,000 requestedQueryCost)
 const MAX_PAGE_SIZE = 10;
-
-// ---------------------------------------------------------------------------
-// GraphQL query
-// ---------------------------------------------------------------------------
-
-function buildInvoicesQuery(updatedAfter: string): string {
-  return `
-query AllInvoices($first: Int!, $after: String) {
-  invoices(
-    first: $first
-    after: $after
-    filter: { updatedAt: { after: "${updatedAfter}" } }
-  ) {
-    nodes {
-      id
-      invoiceNumber
-      subject
-      invoiceStatus
-      issuedDate
-      receivedDate
-      amounts {
-        paymentsTotal
-        total
-      }
-      jobs {
-        nodes {
-          jobNumber
-          client {
-            name
-          }
-        }
-      }
-    }
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-    totalCount
-  }
-}
-`;
-}
 
 // ---------------------------------------------------------------------------
 // GraphQL fetch — auth retry + throttle recovery via ThrottleManager
@@ -722,28 +680,6 @@ async function gqlFetch<T>(
 
     throw err;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Normalize + export
-// ---------------------------------------------------------------------------
-
-function normalizeInvoice(node: JobberInvoiceNode): JobberPaidJob[] {
-  const amount = node.amounts.total;
-  const results: JobberPaidJob[] = [];
-  for (const job of node.jobs.nodes) {
-    if (!job.jobNumber) continue;
-    results.push({
-      jobNumber: String(job.jobNumber),
-      invoiceNumber: node.invoiceNumber,
-      invoiceStatus: node.invoiceStatus,
-      issuedDate: node.issuedDate ?? null,
-      paidDate: node.receivedDate ?? null,
-      amount,
-      clientName: job.client?.name ?? "",
-    });
-  }
-  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -910,58 +846,4 @@ export async function fetchJobberJobsByNumbers(
   return all;
 }
 
-export async function fetchJobberInvoices(
-  config: Config,
-  since?: string,
-): Promise<JobberPaidJob[]> {
-  const auth = new JobberAuth(config.jobber.tokenPath);
-  const updatedAfter =
-    since ?? new Date(Date.now() - config.jobber.syncLookbackDays * 86_400_000).toISOString();
 
-  console.log(`  Jobber: querying invoices updated after ${updatedAfter}`);
-
-  const pageSize = Math.min(config.pageSize, MAX_PAGE_SIZE);
-  if (config.pageSize > MAX_PAGE_SIZE) {
-    console.log(
-      `  Jobber: config.pageSize=${config.pageSize} exceeds hard cap ${MAX_PAGE_SIZE} — using ${MAX_PAGE_SIZE}`,
-    );
-  }
-
-  const all: JobberPaidJob[] = [];
-  let cursor: string | null = null;
-  let page = 0;
-  const query = buildInvoicesQuery(updatedAfter);
-
-  try {
-    while (true) {
-      page++;
-      const vars: Record<string, unknown> = { first: pageSize, after: cursor };
-      const data: JobberInvoicesResponse = await gqlFetch<JobberInvoicesResponse>(
-        config.jobber.apiUrl,
-        config.jobber.apiVersion,
-        auth,
-        query,
-        vars,
-      );
-
-      const { nodes, pageInfo, totalCount } = data.invoices;
-      if (page === 1) {
-        console.log(`  Jobber: ${totalCount} total invoices match filter`);
-      }
-
-      for (const node of nodes) {
-        all.push(...normalizeInvoice(node));
-      }
-
-      console.log(`  Jobber: page ${page} — ${nodes.length} invoices → ${all.length} records so far`);
-
-      if (!pageInfo.hasNextPage || !pageInfo.endCursor) break;
-      cursor = pageInfo.endCursor;
-    }
-  } finally {
-    // Persist any pending cost data before returning
-    costRef.flush();
-  }
-
-  return all;
-}
