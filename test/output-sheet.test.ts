@@ -1,32 +1,46 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { AUTO_COL_LETTERS } from "../src/adapters/sheets.js";
+import { AUTO_COL_LETTERS_LEGACY, AUTO_COL_LETTERS_NEW } from "../src/adapters/sheets.js";
 
-describe("AUTO_COL_LETTERS", () => {
+describe("AUTO_COL_LETTERS_LEGACY", () => {
   it("contains E,G,H,I,J,K,L,M,N,O,P,Q,R,T,Z", () => {
     for (const col of ["E", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "T", "Z"]) {
-      assert.ok(AUTO_COL_LETTERS.has(col), `expected ${col} to be in AUTO_COL_LETTERS`);
+      assert.ok(AUTO_COL_LETTERS_LEGACY.has(col), `expected ${col} to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
   it("does not contain F (job number is manual)", () => {
-    assert.equal(AUTO_COL_LETTERS.has("F"), false);
+    assert.equal(AUTO_COL_LETTERS_LEGACY.has("F"), false);
   });
 
   it("contains A,C,D (heypros date + contractor fields — now auto)", () => {
     for (const col of ["A", "C", "D"]) {
-      assert.ok(AUTO_COL_LETTERS.has(col), `expected ${col} to be in AUTO_COL_LETTERS`);
+      assert.ok(AUTO_COL_LETTERS_LEGACY.has(col), `expected ${col} to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
   it("does not contain B,F,S,U,V,W,X,Y (manual columns)", () => {
     for (const col of ["B", "F", "S", "U", "V", "W", "X", "Y"]) {
-      assert.equal(AUTO_COL_LETTERS.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS`);
+      assert.equal(AUTO_COL_LETTERS_LEGACY.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
   it("has exactly 18 auto columns", () => {
-    assert.equal(AUTO_COL_LETTERS.size, 18);
+    assert.equal(AUTO_COL_LETTERS_LEGACY.size, 18);
+  });
+});
+
+describe("AUTO_COL_LETTERS_NEW", () => {
+  it("contains new layout auto columns including tracker block", () => {
+    for (const col of ["A", "C", "D", "E", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "R", "X"]) {
+      assert.ok(AUTO_COL_LETTERS_NEW.has(col), `expected ${col} to be in AUTO_COL_LETTERS_NEW`);
+    }
+  });
+
+  it("does not contain new manual columns B,F,Q,S,T,U,V,W", () => {
+    for (const col of ["B", "F", "Q", "S", "T", "U", "V", "W"]) {
+      assert.equal(AUTO_COL_LETTERS_NEW.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS_NEW`);
+    }
   });
 });
 
@@ -47,7 +61,7 @@ describe("batchUpdateAutoColumns range format", () => {
 
     const refs: string[] = [];
     for (const [col] of Object.entries(update.values)) {
-      if (AUTO_COL_LETTERS.has(col)) {
+      if (AUTO_COL_LETTERS_LEGACY.has(col)) {
         refs.push(`${tab}!${col}${update.rowIndex}`);
       }
     }
@@ -64,7 +78,7 @@ describe("batchUpdateAutoColumns range format", () => {
 
     const refs: string[] = [];
     for (const [col] of Object.entries(update.values)) {
-      if (AUTO_COL_LETTERS.has(col)) {
+      if (AUTO_COL_LETTERS_LEGACY.has(col)) {
         refs.push(`${tab}!${col}${update.rowIndex}`);
       }
     }

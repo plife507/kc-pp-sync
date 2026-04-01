@@ -169,61 +169,90 @@ export async function refreshGTPTab(
 
   // Derive GTP tab name based on layout
   let gtpTab: string;
+  let monthName: string;
   if (useNew) {
     // New naming: "March" → "March - GTP $"
     gtpTab = `${sourceTab} - GTP $`;
+    monthName = sourceTab;
   } else {
     // Legacy naming: "March 2026" → "GTP $ - March"
-    const monthName = sourceTab.split(" ")[0];
+    monthName = sourceTab.split(" ")[0];
     gtpTab = `GTP $ - ${monthName}`;
   }
 
   const sheets = await getSheetsClient();
 
-  // Read enough columns to cover both layouts
+  // --- Helper: extract GTP-eligible rows from a tab ---
+  function extractGtpRows(
+    rows: string[][],
+    layoutNew: boolean,
+  ): string[][] {
+    const COL_DATE = 0;
+    const COL_COMPANY = 2;
+    const COL_PP_OWNER = 3;
+    const COL_JOB_NUM = 5;
+
+    // New layout: N=13 (All Paid?), P=15 (Sub Inv Amt), S=18 (Payment Status), T=19 (Payment Tracking)
+    // Legacy:     O=14 (Invoice Status), R=17 (Sub Inv Amt), U=20 (Payment Status), V=21 (Payment Tracking)
+    const COL_PAID_CHECK = layoutNew ? 13 : 14;
+    const COL_SUB_AMOUNT = layoutNew ? 15 : 17;
+    const COL_PAYMENT_STATUS = layoutNew ? 18 : 20;
+    const COL_PAYMENT_TRACKING = layoutNew ? 19 : 21;
+
+    const paidValue = layoutNew ? "✅" : "Paid";
+
+    const result: string[][] = [];
+    for (const row of rows) {
+      const paidCheck = (row[COL_PAID_CHECK] ?? "").toString().trim();
+      const paymentStatus = (row[COL_PAYMENT_STATUS] ?? "").toString().trim();
+      const paymentTracking = (row[COL_PAYMENT_TRACKING] ?? "").toString().trim();
+
+      if (
+        paidCheck === paidValue &&
+        paymentStatus === "Good to Pay" &&
+        paymentTracking.toUpperCase() === "AWAITING FOR PAYMENT"
+      ) {
+        result.push([
+          (row[COL_DATE] ?? "").toString(),
+          (row[COL_COMPANY] ?? "").toString(),
+          (row[COL_PP_OWNER] ?? "").toString(),
+          (row[COL_JOB_NUM] ?? "").toString(),
+          (row[COL_SUB_AMOUNT] ?? "").toString(),
+          paidCheck,
+          paymentStatus,
+          paymentTracking,
+        ]);
+      }
+    }
+    return result;
+  }
+
+  // --- Read main month tab ---
   const readRange = useNew ? `'${sourceTab}'!A2:T500` : `'${sourceTab}'!A2:V500`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: readRange,
   });
-  const rows = res.data.values ?? [];
+  const gtpRows = extractGtpRows(res.data.values ?? [], useNew);
+  console.log(`  GTP from '${sourceTab}': ${gtpRows.length} rows`);
 
-  // Column indices (0-based) differ by layout
-  const COL_DATE = 0;
-  const COL_COMPANY = 2;
-  const COL_PP_OWNER = 3;
-  const COL_JOB_NUM = 5;
-
-  // New layout: N=13 (All Paid?), P=15 (Sub Inv Amt), S=18 (Payment Status), T=19 (Payment Tracking)
-  // Legacy:     O=14 (Invoice Status), R=17 (Sub Inv Amt), U=20 (Payment Status), V=21 (Payment Tracking)
-  const COL_PAID_CHECK = useNew ? 13 : 14;
-  const COL_SUB_AMOUNT = useNew ? 15 : 17;
-  const COL_PAYMENT_STATUS = useNew ? 18 : 20;
-  const COL_PAYMENT_TRACKING = useNew ? 19 : 21;
-
-  const paidValue = useNew ? "✅" : "Paid";
-
-  const gtpRows: string[][] = [];
-  for (const row of rows) {
-    const paidCheck = (row[COL_PAID_CHECK] ?? "").toString().trim();
-    const paymentStatus = (row[COL_PAYMENT_STATUS] ?? "").toString().trim();
-    const paymentTracking = (row[COL_PAYMENT_TRACKING] ?? "").toString().trim();
-
-    if (
-      paidCheck === paidValue &&
-      paymentStatus === "Good to Pay" &&
-      paymentTracking.toUpperCase() === "AWAITING FOR PAYMENT"
-    ) {
-      gtpRows.push([
-        (row[COL_DATE] ?? "").toString(),
-        (row[COL_COMPANY] ?? "").toString(),
-        (row[COL_PP_OWNER] ?? "").toString(),
-        (row[COL_JOB_NUM] ?? "").toString(),
-        (row[COL_SUB_AMOUNT] ?? "").toString(),
-        paidCheck,
-        paymentStatus,
-        paymentTracking,
-      ]);
+  // --- Also read recurring tab ({Month} - R) if it exists ---
+  // Recurring tabs always use legacy layout (A-Z, 26 cols)
+  const recurringTab = `${monthName} - R`;
+  try {
+    const recurRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${recurringTab}'!A2:V500`,
+    });
+    const recurGtp = extractGtpRows(recurRes.data.values ?? [], false);
+    console.log(`  GTP from '${recurringTab}': ${recurGtp.length} rows`);
+    gtpRows.push(...recurGtp);
+  } catch (e: any) {
+    // Recurring tab may not exist — that's fine
+    if (e?.message?.includes("Unable to parse range")) {
+      console.log(`  No recurring tab '${recurringTab}' — skipping`);
+    } else {
+      throw e;
     }
   }
 
