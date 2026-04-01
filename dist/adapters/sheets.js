@@ -189,7 +189,7 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
                     (row[COL_PP_OWNER] ?? "").toString(),
                     (row[COL_JOB_NUM] ?? "").toString(),
                     (row[COL_SUB_AMOUNT] ?? "").toString(),
-                    paidCheck,
+                    "✅", // normalize: legacy "Paid" → "✅" for GTP output
                     paymentStatus,
                     paymentTracking,
                 ]);
