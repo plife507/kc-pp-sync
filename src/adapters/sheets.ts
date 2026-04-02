@@ -175,9 +175,11 @@ export async function refreshGTPTab(
     gtpTab = `${sourceTab} - GTP $`;
     monthName = sourceTab;
   } else {
-    // Legacy naming: "March 2026" → "GTP $ - March"
+    // Legacy naming: "February 2026" → "Feb - GTP $", "January 2026" → "Jan - GTP $"
+    const MONTH_SHORT: Record<string, string> = { January: "Jan", February: "Feb" };
     monthName = sourceTab.split(" ")[0];
-    gtpTab = `GTP $ - ${monthName}`;
+    const shortName = MONTH_SHORT[monthName] ?? monthName;
+    gtpTab = `${shortName} - GTP $`;
   }
 
   const sheets = await getSheetsClient();
@@ -238,7 +240,10 @@ export async function refreshGTPTab(
 
   // --- Also read recurring tab ({Month} - R) if it exists ---
   // Recurring tabs always use legacy layout (A-Z, 26 cols)
-  const recurringTab = `${monthName} - R`;
+  // For legacy months use short names: "February" → "Feb - R"
+  const MONTH_SHORT_R: Record<string, string> = { January: "Jan", February: "Feb" };
+  const recurringMonthName = MONTH_SHORT_R[monthName] ?? monthName;
+  const recurringTab = `${recurringMonthName} - R`;
   try {
     const recurRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
