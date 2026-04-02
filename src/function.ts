@@ -456,8 +456,8 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
  * - A (Date) auto-populated from HeyPros installationStarts (visit date)
  * - L (Invoice #) is NOT overwritten — manually entered
  * - M, N, O, P only filled when L has a value (invoice lookup)
- * - HeyPros matching by HeyPros ID (col E) instead of chronological assignment
- * - No month filtering on WOs
+ * - HeyPros WOs grouped by job number, filtered to tab month, sorted by installationStarts ascending
+ * - Sequential round-robin assignment per job number (same as monthly multi-WO logic)
  * - No GTP refresh
  */
 async function runRecurringTabFlow(config: Config): Promise<{ updateCount: number; jobCount: number }> {
@@ -489,14 +489,7 @@ async function runRecurringTabFlow(config: Config): Promise<{ updateCount: numbe
   const heyProsJobs = await fetchJobsByPurchaseOrders(config, uniqueJobNumbers);
   console.log(`  → ${heyProsJobs.length} HeyPros job matches`);
 
-  // Index HeyPros by hashidNumeric (normalized, no dashes) for direct lookup by col E
-  const heyProsByHashid = new Map<string, HeyProsJobDetail>();
-  for (const hp of heyProsJobs) {
-    const normalized = hp.hashidNumeric ? String(hp.hashidNumeric).replace(/-/g, "") : "";
-    if (normalized) heyProsByHashid.set(normalized, hp);
-  }
-
-  // Also index by PO for fallback
+  // Index HeyPros by PO (job number), sort by installationStarts, filter to tab month
   const heyProsByPO = new Map<string, HeyProsJobDetail[]>();
   for (const hp of heyProsJobs) {
     const po = hp.purchaseOrder?.trim();
@@ -507,21 +500,42 @@ async function runRecurringTabFlow(config: Config): Promise<{ updateCount: numbe
     }
   }
 
+  // Parse target month from tab name (strip " - R" suffix first)
+  const baseTabName = config.sheets.sheetsTab.replace(/ - R$/, "");
+  const tabMonth = parseTabMonth(baseTabName);
+
+  // Sort each PO's WOs by installationStarts ascending, then filter to tab month
+  for (const [po, list] of heyProsByPO) {
+    list.sort((a, b) => {
+      const da = a.installationStarts ? new Date(a.installationStarts).getTime() : 0;
+      const db = b.installationStarts ? new Date(b.installationStarts).getTime() : 0;
+      return da - db;
+    });
+    // Filter to tab month if we could parse it
+    if (tabMonth) {
+      const filtered = list.filter(wo => {
+        if (!wo.installationStarts) return true;
+        const d = new Date(wo.installationStarts);
+        return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
+      });
+      heyProsByPO.set(po, filtered);
+    }
+  }
+
+  // Sequential assignment counter per job number (round robin)
+  const heyProsAssignmentIndex = new Map<string, number>();
+
   // 4. Build per-row updates
   const updates: Array<{ rowIndex: number; values: Record<string, string> }> = [];
 
   for (const { rowIndex, jobNumber, invoiceNumber, heyProsId } of rows) {
     const jobberRecords = jobberByNumber.get(jobNumber) ?? [];
 
-    // Match HeyPros by the existing HeyPros ID in column E (direct match)
-    const normalizedId = heyProsId.replace(/-/g, "");
-    let heyPros = normalizedId ? heyProsByHashid.get(normalizedId) : undefined;
-
-    // Fallback: if no direct match, try PO list (first unassigned)
-    if (!heyPros) {
-      const poList = heyProsByPO.get(jobNumber) ?? [];
-      if (poList.length > 0) heyPros = poList[0];
-    }
+    // Sequential WO assignment: each row for the same job gets the next WO in date order
+    const filteredList = heyProsByPO.get(jobNumber) ?? [];
+    const hpIdx = heyProsAssignmentIndex.get(jobNumber) ?? 0;
+    const heyPros = hpIdx < filteredList.length ? filteredList[hpIdx] : undefined;
+    heyProsAssignmentIndex.set(jobNumber, hpIdx + 1);
 
     const allInvoices = heyPros?.jobInvoices ?? [];
     const KNOWN_STATUSES = ["Accepted", "Rejected", "Canceled", "Pending Approval"];

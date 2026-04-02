@@ -8,7 +8,8 @@
     "build": "tsc",
     "gcp-build": "true",
     "test": "tsx --test test/*.test.ts",
-    "local": "npx functions-framework --target=kcPPSync --source=dist/"
+    "local": "npx functions-framework --target=kcPPSync --source=dist/",
+    "start": "npx functions-framework --target=kcPPSync --source=dist/"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
