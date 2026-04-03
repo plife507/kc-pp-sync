@@ -4,10 +4,10 @@
 **Goal:** Ensure Jobber auth survives cold starts after refresh token rotation.
 
 ### Tasks
-- [ ] Update `jobber.ts` `persist()` to write rotated refresh token back to Secret Manager
-- [ ] Add `@google-cloud/secret-manager` dependency
+- [x] Update `jobber.ts` `persist()` to write rotated refresh token back to Secret Manager
+- [x] Used googleapis ADC + REST API (no extra SDK dependency needed)
+- [x] Deploy and verify with live sync (revision kc-pp-sync-00039-q5n)
 - [ ] Test: force token refresh → verify Secret Manager updated → simulate cold start
-- [ ] Deploy and verify with live sync
 
 ### Gate
 - [ ] Cold start after token rotation uses new refresh token from Secret Manager
@@ -19,15 +19,16 @@
 **Goal:** Eliminate hardcoded tab names in Cloud Scheduler. Function auto-derives all tab names.
 
 ### Tasks
-- [ ] Add `previousMonthTabName()` helper (e.g., in April → returns "March")
-- [ ] Update `kcPPSync()` to accept `mode` parameter: `current`, `current-r`, `prev`, `prev-r`
-- [ ] Update 4 Cloud Scheduler jobs to use `mode` instead of hardcoded `tab` names
-- [ ] Test: verify each mode resolves to correct tab name
-- [ ] Deploy and update scheduler bodies
+- [x] Add `previousMonthTabName()` helper (e.g., in April → returns "March")
+- [x] Add `resolveMode()`: current, current-r, prev, prev-r → tab names
+- [x] Update `kcPPSync()` to accept `mode` parameter with validation
+- [x] Update 4 Cloud Scheduler jobs to use `mode` instead of hardcoded `tab` names
+- [x] Test: mode=current → "April" ✅, mode=current-r → "April - R" ✅
+- [x] Deploy (kc-pp-sync-00039-q5n) and scheduler bodies updated
 
 ### Gate
-- [ ] All 4 scheduler jobs use `mode` parameter, zero hardcoded tab names
-- [ ] May rollover happens automatically with no manual intervention
+- [x] All 4 scheduler jobs use `mode` parameter, zero hardcoded tab names
+- [ ] May rollover happens automatically with no manual intervention (verify May 1)
 
 ---
 
@@ -35,10 +36,14 @@
 **Goal:** Nathan/team can trigger on-demand sync from Google Sheets.
 
 ### Tasks
-- [ ] Create Apps Script sidebar or custom menu in KC PP Sync spreadsheet
-- [ ] Script calls Cloud Run URL with `{tab: <active tab name>}` via UrlFetchApp
-- [ ] Add auth (OIDC service account token or shared secret header)
-- [ ] Add "Sync Now" button for current tab + "Sync All" for full refresh
+- [x] Create Apps Script custom menu "⚡ KC PP Sync" in spreadsheet
+- [x] Script calls Cloud Run URL with `{tab: <name>}` or `{mode: <mode>}` via UrlFetchApp
+- [x] Auth via `ScriptApp.getIdentityToken()` (OIDC)
+- [x] "Sync Current Tab", "Sync All Active", individual month/recurring options
+- [x] Toast notifications during sync, alert dialog with results
+- [x] Code saved to `apps-script/sync-button.gs`
+- [ ] Install in spreadsheet (Extensions → Apps Script → paste code)
+- [ ] Grant Apps Script SA Cloud Run Invoker role in IAM
 - [ ] Test: click button → sync runs → sheet updates visible
 
 ### Gate
