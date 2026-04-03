@@ -193,6 +193,7 @@ export async function refreshGTPTab(
     const COL_COMPANY = 2;
     const COL_PP_OWNER = 3;
     const COL_JOB_NUM = 5;
+    const COL_CLIENT_NAME = 9;
 
     // New layout: N=13 (All Paid?), P=15 (Sub Inv Amt), S=18 (Payment Status), T=19 (Payment Tracking)
     // Legacy:     O=14 (Invoice Status), R=17 (Sub Inv Amt), U=20 (Payment Status), V=21 (Payment Tracking)
@@ -219,6 +220,7 @@ export async function refreshGTPTab(
           (row[COL_COMPANY] ?? "").toString(),
           (row[COL_PP_OWNER] ?? "").toString(),
           (row[COL_JOB_NUM] ?? "").toString(),
+          (row[COL_CLIENT_NAME] ?? "").toString(),
           (row[COL_SUB_AMOUNT] ?? "").toString(),
           "✅",  // normalize: legacy "Paid" → "✅" for GTP output
           paymentStatus,
@@ -265,7 +267,7 @@ export async function refreshGTPTab(
   try {
     await sheets.spreadsheets.values.clear({
       spreadsheetId,
-      range: `'${gtpTab}'!A2:H500`,
+      range: `'${gtpTab}'!A2:I500`,
     });
   } catch (e: any) {
     // If the tab doesn't exist, log and skip
@@ -280,7 +282,7 @@ export async function refreshGTPTab(
   if (gtpRows.length > 0) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${gtpTab}'!A2:H${gtpRows.length + 1}`,
+      range: `'${gtpTab}'!A2:I${gtpRows.length + 1}`,
       requestBody: { values: gtpRows },
       valueInputOption: "USER_ENTERED",
     });

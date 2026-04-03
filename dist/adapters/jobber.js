@@ -291,6 +291,7 @@ export class JobberAuth {
     constructor(tokenPath) {
         this.tokenPath = tokenPath;
         this.tokens = this.loadTokenFile();
+        this.originalRefreshToken = this.tokens.refresh_token;
         this.clientId =
             process.env.JOBBER_CLIENT_ID ?? loadEnvVar("JOBBER_CLIENT_ID") ?? "";
         this.clientSecret =
@@ -414,6 +415,8 @@ export class JobberAuth {
         this.persist();
         console.log("  Jobber: token refreshed successfully");
     }
+    /** Track the original refresh token to detect rotation */
+    originalRefreshToken = "";
     persist() {
         if (this.tokenPath) {
             try {
@@ -427,6 +430,55 @@ export class JobberAuth {
             console.warn("  Jobber: no token path configured — tokens persisted in-memory only");
         }
         updateEnvFile("JOBBER_ACCESS_TOKEN", this.tokens.access_token);
+        // If refresh token was rotated, persist to Secret Manager so next cold start gets it
+        if (this.originalRefreshToken &&
+            this.tokens.refresh_token !== this.originalRefreshToken) {
+            this.persistRefreshTokenToSecretManager().catch((err) => {
+                console.warn(`  Jobber: ⚠ failed to update Secret Manager: ${err}`);
+            });
+        }
+    }
+    /**
+     * Write rotated refresh token to Secret Manager (GCP).
+     * Uses ADC (Application Default Credentials) via googleapis.
+     * Secret: projects/823212137840/secrets/JOBBER_REFRESH_TOKEN
+     */
+    async persistRefreshTokenToSecretManager() {
+        try {
+            const { google } = await import("googleapis");
+            const auth = new google.auth.GoogleAuth({
+                scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+            });
+            const authClient = await auth.getClient();
+            const token = await authClient.getAccessToken();
+            if (!token.token) {
+                console.warn("  Jobber: no access token from ADC — skipping Secret Manager update");
+                return;
+            }
+            const secretName = "projects/823212137840/secrets/JOBBER_REFRESH_TOKEN";
+            const payload = Buffer.from(this.tokens.refresh_token).toString("base64");
+            const res = await fetch(`https://secretmanager.googleapis.com/v1/${secretName}:addVersion`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token.token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    payload: { data: payload },
+                }),
+            });
+            if (!res.ok) {
+                const body = await res.text().catch(() => "(no body)");
+                console.warn(`  Jobber: Secret Manager update failed (${res.status}): ${body}`);
+                return;
+            }
+            const data = await res.json();
+            console.log(`  Jobber: ✅ refresh token rotated — saved to Secret Manager (${data.name})`);
+            this.originalRefreshToken = this.tokens.refresh_token;
+        }
+        catch (err) {
+            console.warn(`  Jobber: ⚠ Secret Manager update error: ${err}`);
+        }
     }
 }
 // ---------------------------------------------------------------------------

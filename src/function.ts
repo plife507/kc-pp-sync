@@ -5,7 +5,7 @@
  * Option C: Read job numbers from output sheet, then look up in Jobber + HeyPros.
  */
 
-import { loadConfig } from "./config/env.js";
+import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
@@ -679,9 +679,20 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
 
     const config = loadConfig();
 
-    // Allow caller to override the target tab via request body: { tab: "January 2026" }
+    // Allow caller to override the target tab via request body:
+    //   { tab: "March" }           — explicit tab name
+    //   { mode: "current" }        — auto-resolve: current, current-r, prev, prev-r
+    const bodyMode = req.body?.mode;
     const bodyTab = req.body?.tab;
-    if (bodyTab && typeof bodyTab === "string") {
+    if (bodyMode && typeof bodyMode === "string") {
+      const resolved = resolveMode(bodyMode);
+      if (!resolved) {
+        res.status(400).json({ status: "error", error: `Unknown mode: ${bodyMode}. Valid: current, current-r, prev, prev-r` });
+        return;
+      }
+      config.sheets.sheetsTab = resolved;
+      console.log(`  Mode '${bodyMode}' → tab '${resolved}'`);
+    } else if (bodyTab && typeof bodyTab === "string") {
       config.sheets.sheetsTab = bodyTab;
     }
 

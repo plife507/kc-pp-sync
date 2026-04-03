@@ -18,4 +18,13 @@ export interface Config {
     };
     pageSize: number;
 }
+/**
+ * Resolve a sync mode to a concrete tab name.
+ *   "current"   → "April"
+ *   "current-r" → "April - R"
+ *   "prev"      → "March"
+ *   "prev-r"    → "March - R"
+ */
+declare function resolveMode(mode: string): string | null;
+export { resolveMode };
 export declare function loadConfig(): Config;

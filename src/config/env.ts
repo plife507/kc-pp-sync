@@ -30,6 +30,37 @@ function currentMonthTabName(): string {
   return month;
 }
 
+function previousMonthTabName(): string {
+  const now = new Date();
+  // Subtract ~35 days to guarantee previous month
+  const prev = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "long",
+  }).formatToParts(prev);
+  const month = parts.find(p => p.type === "month")?.value ?? "";
+  return month;
+}
+
+/**
+ * Resolve a sync mode to a concrete tab name.
+ *   "current"   → "April"
+ *   "current-r" → "April - R"
+ *   "prev"      → "March"
+ *   "prev-r"    → "March - R"
+ */
+function resolveMode(mode: string): string | null {
+  switch (mode) {
+    case "current":   return currentMonthTabName();
+    case "current-r": return `${currentMonthTabName()} - R`;
+    case "prev":      return previousMonthTabName();
+    case "prev-r":    return `${previousMonthTabName()} - R`;
+    default:          return null;
+  }
+}
+
+export { resolveMode };
+
 export function loadConfig(): Config {
   const required = (key: string): string => {
     const val = process.env[key];

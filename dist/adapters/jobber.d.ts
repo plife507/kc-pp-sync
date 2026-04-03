@@ -12,6 +12,14 @@ export declare class JobberAuth {
     private expiresAtEpoch;
     private isExpiringSoon;
     private refresh;
+    /** Track the original refresh token to detect rotation */
+    private originalRefreshToken;
     private persist;
+    /**
+     * Write rotated refresh token to Secret Manager (GCP).
+     * Uses ADC (Application Default Credentials) via googleapis.
+     * Secret: projects/823212137840/secrets/JOBBER_REFRESH_TOKEN
+     */
+    private persistRefreshTokenToSecretManager;
 }
 export declare function fetchJobberJobsByNumbers(config: Config, jobNumbers: string[]): Promise<JobberPaidJob[]>;
