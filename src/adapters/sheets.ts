@@ -354,4 +354,87 @@ async function getSheetsClient() {
   return google.sheets({ version: "v4", auth: authClient as any });
 }
 
+// ---------------------------------------------------------------------------
+// Command tab — sync result logging
+// ---------------------------------------------------------------------------
+
+const COMMAND_TAB = "Command";
+const COMMAND_HEADERS = [
+  "Timestamp", "Tab", "Status", "Jobs", "Rows", "GTP Rows", "Elapsed", "Error",
+];
+
+export interface SyncLogEntry {
+  timestamp: string;
+  tab: string;
+  status: string;   // "✅ OK" or "🔴 FAILED"
+  jobs: number;
+  rows: number;
+  gtpRows: number;
+  elapsed: string;
+  error: string;
+}
+
+/**
+ * Append a sync result row to the Command tab.
+ * Creates the tab with headers if it doesn't exist.
+ */
+export async function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void> {
+  if (!spreadsheetId) {
+    console.warn("  Command log: no spreadsheetId — skipping");
+    return;
+  }
+
+  const sheets = await getSheetsClient();
+
+  // Check if Command tab exists; create if not
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties.title",
+  });
+  const tabExists = meta.data.sheets?.some(
+    (s) => s.properties?.title === COMMAND_TAB
+  );
+
+  if (!tabExists) {
+    console.log("  Command tab: creating...");
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          { addSheet: { properties: { title: COMMAND_TAB, index: 0 } } },
+        ],
+      },
+    });
+    // Write headers
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${COMMAND_TAB}'!A1:H1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [COMMAND_HEADERS] },
+    });
+    console.log("  Command tab: created with headers");
+  }
+
+  // Append the log row
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `'${COMMAND_TAB}'!A:H`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [[
+        entry.timestamp,
+        entry.tab,
+        entry.status,
+        entry.jobs,
+        entry.rows,
+        entry.gtpRows,
+        entry.elapsed,
+        entry.error,
+      ]],
+    },
+  });
+  console.log(`  Command log: ${entry.status} — ${entry.tab}`);
+}
+
 

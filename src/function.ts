@@ -15,50 +15,7 @@ import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/const
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import type { Request, Response } from "@google-cloud/functions-framework";
-
-// ---------------------------------------------------------------------------
-// Telegram failure alerting — posts to AYA MC command tab (topic:1)
-// ---------------------------------------------------------------------------
-const TELEGRAM_CHAT_ID = "-1003605826368";
-const TELEGRAM_TOPIC_ID = "1";
-
-async function sendFailureAlert(tab: string, elapsed: string, errorMessage: string): Promise<void> {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) {
-    console.warn("  Alert: TELEGRAM_BOT_TOKEN not set — skipping failure alert");
-    return;
-  }
-  const text = [
-    "🔴 *KC PP Sync — FAILED*",
-    "",
-    `📋 Tab: \`${tab}\``,
-    `⏱ Elapsed: ${elapsed}`,
-    `❌ Error: ${errorMessage.slice(0, 500)}`,
-    "",
-    `_${new Date().toISOString()}_`,
-  ].join("\n");
-
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        message_thread_id: parseInt(TELEGRAM_TOPIC_ID, 10),
-        text,
-        parse_mode: "Markdown",
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.warn(`  Alert: Telegram send failed (${res.status}): ${body}`);
-    } else {
-      console.log("  Alert: failure notification sent to Telegram");
-    }
-  } catch (err) {
-    console.warn(`  Alert: Telegram send error: ${err}`);
-  }
-}
+import { logSyncResult } from "./adapters/sheets.js";
 
 const JOB_STATUS_DISPLAY: Record<string, string> = {
   archived: 'Archived',
@@ -778,15 +735,38 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       spreadsheetId: config.sheets.dryRun ? null : config.sheets.spreadsheetId,
     };
     console.log(`Done in ${elapsed}s`, JSON.stringify(summary));
+
+    // Log success to Command tab
+    await logSyncResult(config.sheets.spreadsheetId, {
+      timestamp: new Date().toISOString(),
+      tab: config.sheets.sheetsTab,
+      status: "✅ OK",
+      jobs: jobCount,
+      rows: updateCount,
+      gtpRows: gtpCount,
+      elapsed: `${elapsed}s`,
+      error: "",
+    }).catch((e) => console.warn(`  Command log failed: ${e}`));
+
     res.status(200).json(summary);
   } catch (err) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const message = err instanceof Error ? err.message : String(err);
     console.error(`FATAL (${elapsed}s): ${message}`);
 
-    // Send failure alert to Telegram command tab
-    const tabName = req.body?.tab ?? req.body?.mode ?? "default";
-    await sendFailureAlert(tabName, `${elapsed}s`, message).catch(() => {});
+    // Log failure to Command tab
+    const tabName = req.body?.tab ?? req.body?.mode ?? "unknown";
+    const spreadsheetId = process.env.SPREADSHEET_ID ?? process.env.GOOGLE_SHEETS_DEFAULT_ID ?? "";
+    await logSyncResult(spreadsheetId, {
+      timestamp: new Date().toISOString(),
+      tab: tabName,
+      status: "🔴 FAILED",
+      jobs: 0,
+      rows: 0,
+      gtpRows: 0,
+      elapsed: `${elapsed}s`,
+      error: message.slice(0, 500),
+    }).catch((e) => console.warn(`  Command log failed: ${e}`));
 
     res.status(500).json({ status: "error", elapsed: `${elapsed}s`, error: message });
   }

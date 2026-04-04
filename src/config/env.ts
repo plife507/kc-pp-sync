@@ -31,9 +31,12 @@ function currentMonthTabName(): string {
 }
 
 function previousMonthTabName(): string {
+  // Get current month in LA timezone, then go back one month
   const now = new Date();
-  // Subtract ~35 days to guarantee previous month
-  const prev = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+  const laYear = parseInt(new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric" }).format(now), 10);
+  const laMonth = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })).getMonth(); // 0-indexed
+  // Set to 1st of current LA month, then subtract 1 day → last day of previous month
+  const prev = new Date(Date.UTC(laYear, laMonth, 0));
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     month: "long",

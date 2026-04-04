@@ -62,3 +62,18 @@ export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string):
  * Legacy/recurring link cols: E(4), G(6), J(9), T(19)
  */
 export declare function formatLinkColumns(spreadsheetId: string, tab: string, rowCount: number): Promise<void>;
+export interface SyncLogEntry {
+    timestamp: string;
+    tab: string;
+    status: string;
+    jobs: number;
+    rows: number;
+    gtpRows: number;
+    elapsed: string;
+    error: string;
+}
+/**
+ * Append a sync result row to the Command tab.
+ * Creates the tab with headers if it doesn't exist.
+ */
+export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void>;
