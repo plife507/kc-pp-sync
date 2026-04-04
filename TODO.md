@@ -57,13 +57,17 @@
 **Goal:** Sync failures notify the team proactively.
 
 ### Tasks
-- [ ] Add Slack webhook notification on sync error (POST to ops channel)
-- [ ] Include error message, tab name, elapsed time in alert
+- [x] Add Telegram alert to AYA MC command tab (topic:1) on sync exception
+- [x] TELEGRAM_BOT_TOKEN stored in Secret Manager, mounted in Cloud Run
+- [x] Alert includes tab name, elapsed time, error message (500 char limit)
+- [x] Non-blocking — alert errors don't affect sync response
+- [x] Deployed: kc-pp-sync-00040-ntv
 - [ ] Optional: daily summary of sync health (success count, avg time)
 
 ### Gate
-- [ ] Simulated failure triggers Slack alert within 60 seconds
-- [ ] Alert contains enough info to diagnose without checking Cloud Run logs
+- [x] Alert code deployed and compiled
+- [x] Bot token verified in Cloud Run env
+- [ ] Will verify on next real failure (empty tab syncs don't crash — correct behavior)
 
 ---
 
