@@ -358,7 +358,7 @@ async function getSheetsClient() {
 // Command tab — sync result logging
 // ---------------------------------------------------------------------------
 
-const COMMAND_TAB = "Command";
+const COMMAND_TAB = "Log";
 const COMMAND_HEADERS = [
   "Timestamp", "Tab", "Status", "Jobs", "Rows", "GTP Rows", "Elapsed", "Error",
 ];
