@@ -1,6 +1,6 @@
 # kc-pp-sync
 
-Automated sync service for KC Power Clean. Pulls job and invoice data from Jobber and HeyPros, writes structured records to Google Sheets, and maintains a real-time payment dashboard.
+**v3.0.0** · Automated sync service for KC Power Clean. Pulls job and invoice data from Jobber and HeyPros, writes structured records to Google Sheets, and maintains a real-time payment dashboard.
 
 ## What it does
 
