@@ -522,8 +522,10 @@ export async function refreshDashboard(spreadsheetId) {
             }
         }
     }
-    // 4. Sort months by index and build output arrays
-    const sortedMonths = [...statsByMonth.values()].sort((a, b) => a.monthIndex - b.monthIndex);
+    // 4. Sort months by index and build output arrays (exclude January — tracking starts February)
+    const sortedMonths = [...statsByMonth.values()]
+        .filter(s => s.monthIndex >= 1) // 0=January, 1=February+
+        .sort((a, b) => a.monthIndex - b.monthIndex);
     // Main table header
     const mainHeader = [
         "Month", "Total Jobs", "Total $",
