@@ -692,15 +692,14 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
 
   // Section 2: No Payment notes (row 16+)
   const noPayHeader = ["Excluded — No Payment (jobs that will never be paid)"];
-  const noPaySubHeader = ["Month", "# Jobs Excluded", "Total $ Excluded"];
+  const noPaySubHeader = ["Month", "# Jobs Excluded"];
 
   const noPayRows: (string | number)[][] = [];
-  let ytdNoPayCount = 0, ytdNoPayAmount = 0;
+  let ytdNoPayCount = 0;
   for (const s of sortedMonths) {
     if (s.noPaymentCount === 0) continue;
-    noPayRows.push([s.month, s.noPaymentCount, s.noPaymentAmount]);
+    noPayRows.push([s.month, s.noPaymentCount]);
     ytdNoPayCount += s.noPaymentCount;
-    ytdNoPayAmount += s.noPaymentAmount;
   }
 
   // 5. Ensure Dashboard tab exists
@@ -747,7 +746,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     ...noPayRows,
   ];
   if (ytdNoPayCount > 0) {
-    allNoPayRows.push(["YTD", ytdNoPayCount, ytdNoPayAmount]);
+    allNoPayRows.push(["YTD", ytdNoPayCount]);
   }
 
   if (allNoPayRows.length > 2) { // only write if there's data beyond headers
@@ -834,24 +833,9 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     // No Payment sub-header: bold
     formatRequests.push({
       repeatCell: {
-        range: { sheetId: dashboardSheetId, startRowIndex: noPaySubHeaderRowIndex, endRowIndex: noPaySubHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 3 },
+        range: { sheetId: dashboardSheetId, startRowIndex: noPaySubHeaderRowIndex, endRowIndex: noPaySubHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 2 },
         cell: { userEnteredFormat: { textFormat: { bold: true } } },
         fields: "userEnteredFormat.textFormat",
-      },
-    });
-
-    // No Payment $ column (C, index 2)
-    formatRequests.push({
-      repeatCell: {
-        range: {
-          sheetId: dashboardSheetId,
-          startRowIndex: noPaySubHeaderRowIndex + 1,
-          endRowIndex: noPayStartRow + allNoPayRows.length - 1,
-          startColumnIndex: 2,
-          endColumnIndex: 3,
-        },
-        cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
-        fields: "userEnteredFormat.numberFormat",
       },
     });
 
@@ -859,7 +843,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     if (ytdNoPayCount > 0) {
       formatRequests.push({
         repeatCell: {
-          range: { sheetId: dashboardSheetId, startRowIndex: noPayYtdRowIndex, endRowIndex: noPayYtdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 3 },
+          range: { sheetId: dashboardSheetId, startRowIndex: noPayYtdRowIndex, endRowIndex: noPayYtdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 2 },
           cell: {
             userEnteredFormat: {
               backgroundColor: { red: 207/255, green: 226/255, blue: 255/255 },
