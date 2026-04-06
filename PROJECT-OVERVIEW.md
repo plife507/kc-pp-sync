@@ -1,112 +1,113 @@
 # KC PP Sync — Project Overview
 
 ## Goal
-Automate KC Power Clean's cross-system operations by syncing data between **Jobber** (job management, invoicing, payments) and **HeyPros** (subcontractor dispatch, labels, sub-invoices), with **Google Sheets** as the output layer and **GCloud** as the production host.
+Automate KC Power Clean's cross-system operations by syncing data between **Jobber** (job management, invoicing, payments) and **HeyPros** (subcontractor dispatch, sub-invoices), with **Google Sheets** as the output layer and **Google Cloud** as the production host.
 
 ## The Problem
-Nathan manually tracks subcontractor invoices across two disconnected platforms. When a client pays on Jobber, someone has to go update labels in HeyPros and maintain a spreadsheet with 22+ columns. At 100-200 jobs/month, this doesn't scale.
+Nathan manually tracks subcontractor invoices across two disconnected platforms. When a client pays on Jobber, someone has to cross-reference HeyPros and maintain a spreadsheet with 39+ columns per row. At 150-200 jobs/month, this doesn't scale.
 
 ## The Solution
-A scheduled sync job that:
-1. Pulls paid invoices from **Jobber** (incremental — only what changed since last run)
-2. Matches them to work orders in **HeyPros** via Job # = WO#
-3. Pulls sub-invoice data from HeyPros (invoice #, amount, status)
-4. Outputs to **Google Sheets** (mirrors the existing Sub Invoices sheet structure)
-5. Eventually: auto-labels HeyPros jobs ("PAID BY CLIENT") via mutation API
+A scheduled Cloud Run service that:
+1. Pulls job and invoice data from **Jobber** by month
+2. Matches work orders from **HeyPros** to Jobber jobs via Job # = WO# (`purchaseOrder`)
+3. Pulls sub-invoice data from HeyPros (invoice #, amount, status, PDF link)
+4. Writes structured rows to **Google Sheets** — one row per HeyPros WO
+5. Maintains a payment Dashboard, GTP $ output tabs, and sync Command log
+6. Refreshes automatically every hour via Cloud Scheduler
 
 ## Systems Connected
 
 | System | Access | What We Pull |
 |---|---|---|
-| **Jobber** | GraphQL API, OAuth 2.0 | Invoices, payment status, client name, amounts, dates |
-| **HeyPros** | GraphQL API, email/password auth | Jobs, labels, sub-invoices, contractor info |
-| **Google Sheets** | Sheets API via gcloud | Output target — mirrors Sub Invoices sheet |
-| **GCloud** | Cloud Run Job (planned) | Scheduled execution, secrets, $0/month |
+| **Jobber** | GraphQL API, OAuth 2.0 (Secret Manager) | Jobs, invoices, payment status, amounts, client names |
+| **HeyPros** | GraphQL API, email/password auth | Work orders, sub-invoices, contractor info, PDF links |
+| **Google Sheets** | Sheets API (ADC via Cloud Run SA) | Output target — all sync writes go here |
+| **Google Cloud** | Cloud Run + Scheduler + Secret Manager | Execution, scheduling, credential storage |
 
-## Current State
+## Current State (as of 2026-04-06)
 
-### ✅ Done
-- Jobber CLI deployed on VPS with OAuth auto-refresh (6h cron)
-- Jobber API: query paid invoices by date range, filter by status, full pagination
-- HeyPros API: fully mapped (197 types), all 319 WOs accessible, label mutations documented
-- Cross-system matching: Jobber Job # = HeyPros WO# (purchaseOrder) — verified with live data
-- Real Jobber adapter with self-contained OAuth token refresh
-- HeyPros adapter with token caching + rate protection (hardwired best practices)
-- POC sheet created with real data from both APIs
-- 7/7 unit tests passing
-- Project renamed from payment-sync → kc-pp-sync
+### ✅ Live in Production
+- Cloud Run service `kc-pp-sync` (revision kc-pp-sync-00053-hg4, 512 MiB)
+- 4 Cloud Scheduler jobs: current, current-r, prev, prev-r (staggered hourly)
+- Dual layout system: new 39-column layout (March+) + legacy 26-column (Jan/Feb)
+- Recurring tabs: `March - R`, `April - R`, `Feb - R` (manual Job# input, auto-populated)
+- Multi-invoice tracker (cols Y–AM): 5 invoice slots per row with amount + paid status
+- GTP $ tabs: filtered output per month for unpaid Good-to-Pay rows
+- Dashboard tab: payment status aggregation by month (Feb–present), YTD totals
+- Profitability dashboard: revenue, labor, gross profit, margin % by month with color coding
+- Command tab: full sync result log (every invocation appended)
+- Auto Notes: 12 conditions, rebuilt every sync
+- Manual sync via Apps Script sidebar (KC Sync menu in spreadsheet)
+- Jobber OAuth token auto-rotation via Secret Manager
+- 43 tests passing
 
-### ✅ Done (updated 2026-03-21)
-- Multiple HeyPros jobs per WO#: one row per HeyPros ID, round-robin assignment — commit d828dc5
-- Multi-invoice selection: highest invoice number for both Jobber and HeyPros — commit d828dc5
-- HeyPros invoice fields: invoice #, sub-invoice amount, PDF URL in sheet — implemented
-- Full 24-column sheet structure matched (A–X)
-- Job Type column (G) added — commit 98ee3a7
-- Cloud Function deployed (gen2, us-central1): kc-pp-sync-00011-cof, ACTIVE
-- Cloud Scheduler: hourly at `0 * * * *` UTC
-- 38/38 tests passing
-- HeyPros ID normalization utility: normalizeHashidNumeric() — commit f70514c
-
-### 📋 Open
-- Recurring job edge case: same WO# reused across months accumulates many invoices; needs date-range filter or dedup strategy. Deferred.
-- Prod deploy config: still using test sheet ID and SYNC_LOOKBACK_DAYS=20
-- Cloud Function has no failure alerting — silent on auth/write errors
-- HeyPros label mutations (jobLabelAttach "PAID BY CLIENT"): deferred until Nathan approves writes
+### 📋 Deferred / Open
+- Remaining Balance column (Sub Invoice Amount − KCPC Released Amount) — Nathan paused pending scope clarification
+- HeyPros label mutations (`jobLabelAttach "PAID BY CLIENT"`) — deferred until Nathan approves writes
+- Phase 3 gate for manual sync button: IAM grant + install in spreadsheet not yet verified
+- May rollover: auto-derives correctly from date, verify May 1
 
 ### 🔒 Constraints
 - HeyPros: read-only until Nathan approves mutations
-- HeyPros: max 1 signIn per 15 min, 250ms between queries, no auth retries
-- Jobber: 2,500 requests per 5 min (not close to hitting)
-- Jobber WO# is NOT unique in HeyPros (duplicate WO 19699 — matcher handles this)
-- GCloud free tier only — $0/month target
+- HeyPros: max 1 signIn per 15 min, 250ms between queries
+- GCloud free tier — $0/month target
+- No Claude Code dependency for ops — all tool operations via HQ directly
 
 ## Architecture
 
 ```
-Cloud Scheduler (hourly)
-  → Cloud Run Job (kc-pp-sync container)
-    → Jobber API: "What invoices were paid since last sync?"
-      (5-20 results per day, incremental)
-    → HeyPros API: Look up those WO#s + get sub-invoice data
-      (5-20 targeted lookups, not full scan)
-    → Google Sheets: Write/update rows
-    → Optional: HeyPros jobLabelAttach("PAID BY CLIENT")
-    → Exit
+Cloud Scheduler (4 jobs, hourly staggered)
+  → Cloud Run: kc-pp-sync (us-central1, aya-gservicies)
+    → Secret Manager: read Jobber tokens, HeyPros creds, sheet ID
+    → Jobber GraphQL: fetch all jobs + invoices for target month
+    → HeyPros GraphQL: fetch all WOs, match by purchaseOrder = Job#
+    → Google Sheets API: write rows, refresh GTP tab, refresh Dashboard
+    → Secret Manager: write rotated Jobber token (if refreshed)
+    → Command tab: log sync result
+    → Telegram (on failure): alert to AYA MC
 ```
 
+## Spreadsheet Structure
+
+**KC PP Sync** — `1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q`
+
+| Tab | Type | Notes |
+|---|---|---|
+| `February 2026` | Legacy one-off | 26-col layout |
+| `March`, `April`… | New one-off | 39-col layout with invoice tracker |
+| `Feb - R`, `March - R`, `April - R` | Recurring | 26-col layout, manual Job#+Invoice# |
+| `March - GTP $`, `April - GTP $`… | GTP output | Filtered unpaid Good-to-Pay rows |
+| `Dashboard` | Aggregation | Payment status + profitability by month |
+| `Command` | Sync log | Every sync result appended |
+
 ## Key Files
-- `src/adapters/jobber.ts` — Jobber API with self-contained OAuth refresh
-- `src/adapters/heypros.ts` — HeyPros API with token caching + rate protection
-- `src/adapters/sheets.ts` — Google Sheets writer
-- `src/core/matcher.ts` — Job# → WO# matching with duplicate handling
-- `src/config/env.ts` — Environment config
-- `src/index.ts` — CLI entrypoint
+- `src/function.ts` — Cloud Run handler, mode routing, orchestration
+- `src/adapters/jobber.ts` — Jobber GraphQL with OAuth + Secret Manager token rotation
+- `src/adapters/heypros.ts` — HeyPros GraphQL with token caching + rate protection
+- `src/adapters/sheets.ts` — All Sheets read/write: sync, GTP, Dashboard, Profitability, Command log
+- `src/config/constants.ts` — Layout column maps, tab lists, header definitions
+- `src/config/types.ts` — Shared TypeScript interfaces
+- `apps-script/sync-button.gs` — Google Apps Script sidebar (manual sync trigger)
+- `test/output-sheet.test.ts` — 43 unit tests
 
 ## API Authority
 
 ### HeyPros API
-Canonical technical contracts live in `projects/heypros-api/` — a standalone reference library.
-This project consumes it; do not duplicate field contracts here.
-
-Key references:
-- `projects/heypros-api/schema/schema-map.md` — complete HeyPros API map
-- `projects/heypros-api/references/heypros-job-card-schema.md` — full JobDto field reference
-- `projects/heypros-api/references/field-contract-*.md` — per-type field contracts
-- `projects/heypros-api/references/runtime-guardrails-readonly.md` — auth + rate-limit rules
-- `projects/heypros-api/references/label-mutations-investigation-2026-03-20.md` — label CRUD (future write work)
-- `projects/heypros-api/references/edge-case-full-sweep-2026-03-20.md` — edge case evidence
-- `projects/heypros-api/queries/` — verified GraphQL query library
-- See `references/HEYPROS-API-AUTHORITY.md` for the full reference map
+Canonical reference in `references/HEYPROS-API-AUTHORITY.md` and linked project docs.
+Key facts:
+- 197 types, ~317 WOs, ~30-60 new/month
+- WO# is NOT unique (duplicate WO 19699 confirmed)
+- `jobsDashboard` does NOT return Closed/Paid WOs
+- Amounts in cents — divide by 100
+- Token TTL = 60 min, signIn rate limit = 1 per 15 min
 
 ### Jobber API
-Lives inside this project — no separate Jobber API project.
-- `src/adapters/jobber.ts` — live Jobber GraphQL adapter with OAuth auto-refresh
-- `references/jobber-schema/` — Jobber introspection snapshot
-- Auth: OAuth 2.0 via JOBBER_CLIENT_ID / JOBBER_CLIENT_SECRET / JOBBER_REFRESH_TOKEN (Secret Manager)
+Lives in `src/adapters/jobber.ts` and `references/jobber-schema/`.
+- OAuth 2.0, tokens in Secret Manager, auto-rotated on refresh
+- `searchTerm` is fuzzy — always exact-filter client-side
+- `receivedDate` = paid date
 
-### Browser-efficiency projects
-`projects/browser-efficiency/` and `projects/global-browser-efficiency/` are separate browser automation doctrine projects. They are NOT part of kc-pp-sync. Do not merge.
-
-### GCloud
-- Project: `aya-gservicies` (current sandbox/build)
-- Prod direction: dedicated project when integration matures (see `docs/gcloud-sandbox-policy.md`)
+### Google Cloud
+- Project: `aya-gservicies`
+- Auth: ADC via Cloud Run service account `823212137840-compute@developer.gserviceaccount.com`
+- Secrets: `jobber-tokens`, `heypros-credentials`, `spreadsheet-id`

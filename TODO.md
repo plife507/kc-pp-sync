@@ -1,85 +1,63 @@
-# TODO: kc-pp-sync Production Hardening
+# TODO: kc-pp-sync — Open Work
 
-## Phase 1: Jobber Token Rotation Fix 🔴
-**Goal:** Ensure Jobber auth survives cold starts after refresh token rotation.
-
-### Tasks
-- [x] Update `jobber.ts` `persist()` to write rotated refresh token back to Secret Manager
-- [x] Used googleapis ADC + REST API (no extra SDK dependency needed)
-- [x] Deploy and verify with live sync (revision kc-pp-sync-00039-q5n)
-- [ ] Test: force token refresh → verify Secret Manager updated → simulate cold start
-
-### Gate
-- [ ] Cold start after token rotation uses new refresh token from Secret Manager
-- [ ] No auth failures in Cloud Run logs across 3+ sync cycles
+## Status Summary (2026-04-06)
+All production hardening phases (1-4) complete. Dashboard live. Profitability dashboard live.
+Current revision: kc-pp-sync-00053-hg4
 
 ---
 
-## Phase 2: Auto Month Rollover 🟡
-**Goal:** Eliminate hardcoded tab names in Cloud Scheduler. Function auto-derives all tab names.
+## Open: Remaining Balance Column
 
-### Tasks
-- [x] Add `previousMonthTabName()` helper (e.g., in April → returns "March")
-- [x] Add `resolveMode()`: current, current-r, prev, prev-r → tab names
-- [x] Update `kcPPSync()` to accept `mode` parameter with validation
-- [x] Update 4 Cloud Scheduler jobs to use `mode` instead of hardcoded `tab` names
-- [x] Test: mode=current → "April" ✅, mode=current-r → "April - R" ✅
-- [x] Deploy (kc-pp-sync-00039-q5n) and scheduler bodies updated
+**Goal:** Add "Remaining Balance to Pay" column = Sub Invoice Amount − KCPC Released Amount
 
-### Gate
-- [x] All 4 scheduler jobs use `mode` parameter, zero hardcoded tab names
-- [ ] May rollover happens automatically with no manual intervention (verify May 1)
+**Status:** Paused — Nathan requested, deferred pending scope clarification
+- Formula scope: new layout only (col P − col Q) or also legacy (col R − col S)?
+- Blank handling: show $0, blank, or formula only when both columns populated?
+- Position: new column added to layout or computed in existing space?
+
+**Waiting on:** Nathan to confirm scope before implementation.
 
 ---
 
-## Phase 3: Manual Sync Button 🟡
-**Goal:** Nathan/team can trigger on-demand sync from Google Sheets.
+## Open: Manual Sync Button Install
 
-### Tasks
-- [x] Create Apps Script custom menu "⚡ KC PP Sync" in spreadsheet
-- [x] Script calls Cloud Run URL with `{tab: <name>}` or `{mode: <mode>}` via UrlFetchApp
-- [x] Auth via `ScriptApp.getIdentityToken()` (OIDC)
-- [x] "Sync Current Tab", "Sync All Active", individual month/recurring options
-- [x] Toast notifications during sync, alert dialog with results
-- [x] Code saved to `apps-script/sync-button.gs`
-- [ ] Install in spreadsheet (Extensions → Apps Script → paste code)
+**Phase 3 gates not yet verified:**
+- [ ] Install `apps-script/sync-button.gs` in spreadsheet (Extensions → Apps Script → paste)
 - [ ] Grant Apps Script SA Cloud Run Invoker role in IAM
 - [ ] Test: click button → sync runs → sheet updates visible
 
-### Gate
-- [ ] Non-technical user can trigger sync from spreadsheet menu
-- [ ] Auth prevents unauthorized triggers
-- [ ] Button works for any tab (monthly, recurring, or specific)
+Script is written and saved. Auth path uses `ScriptApp.getIdentityToken()` (OIDC).
 
 ---
 
-## Phase 4: Failure Alerting 🟢
-**Goal:** Sync failures notify the team proactively.
+## Open: May Rollover Verification
 
-### Tasks
-- [x] Add Telegram alert to AYA MC command tab (topic:1) on sync exception
-- [x] TELEGRAM_BOT_TOKEN stored in Secret Manager, mounted in Cloud Run
-- [x] Alert includes tab name, elapsed time, error message (500 char limit)
-- [x] Non-blocking — alert errors don't affect sync response
-- [x] Deployed: kc-pp-sync-00040-ntv
-- [ ] Optional: daily summary of sync health (success count, avg time)
-
-### Gate
-- [x] Alert code deployed and compiled
-- [x] Bot token verified in Cloud Run env
-- [ ] Will verify on next real failure (empty tab syncs don't crash — correct behavior)
+- [ ] Verify May 1 auto-rollover: `mode=current` → "May", `mode=prev` → "April"
+- [ ] No manual Cloud Scheduler updates needed (auto-derives from current date)
 
 ---
 
-## Phase 5: Cleanup 🟢
-- [ ] Add Feb - R to scheduler if still needs periodic sync
-- [ ] Remove any stale Cloud Scheduler jobs
-- [ ] Verify all 10+ GTP $ tabs have correct CF/dropdowns/headers (done 2026-04-03)
-- [ ] Update kc-pp-sync-reference.md with final production state
+## Deferred: HeyPros Label Mutations
+
+- `jobLabelAttach "PAID BY CLIENT"` — read-only until Nathan approves writes
+- API is fully mapped and ready (see `references/HEYPROS-API-AUTHORITY.md`)
 
 ---
 
-## Constraints
-- No Claude Code dependency — all work via direct edits or DEV
-- Zero downtime — deploy incrementally, verify each phase
-- Free tier awareness — Secret Manager writes count toward 10K/month limit
+## Deferred: Feb - R Scheduler
+
+- [ ] Add Feb - R to Cloud Scheduler if it still needs periodic sync
+- Currently: Feb - R only syncs on manual trigger or `prev-r` mode
+
+---
+
+## Completed Phases (reference)
+
+| Phase | Description | Revision |
+|---|---|---|
+| 1 | Jobber token rotation via Secret Manager | kc-pp-sync-00039-q5n |
+| 2 | Auto month rollover (mode parameter) | kc-pp-sync-00039-q5n |
+| 3 | Manual sync button (Apps Script) | kc-pp-sync-00040-ntv |
+| 4 | Failure alerting + prev-month bug fix | kc-pp-sync-00042-l2b |
+| 5 | Dashboard tab (payment status) | kc-pp-sync-00050+ |
+| 6 | Profitability dashboard | kc-pp-sync-00053-hg4 |

@@ -1,104 +1,105 @@
 # CLAUDE.md — KC PP Sync
 
-Last updated: 2026-04-01 (v1.1 — multi-invoice tracker)
+Last updated: 2026-04-06 (v2.0 — production hardening complete)
 
 ## Purpose
-KC PP Sync is a Google Cloud Function that syncs job and payment data from Jobber + HeyPros APIs into a Google Sheet for KC Power Clean's subcontractor payment operations. Runs hourly via Cloud Scheduler.
+KC PP Sync is a **Google Cloud Run** service that syncs job and payment data from Jobber + HeyPros APIs into a Google Sheet for KC Power Clean's subcontractor payment operations. Deployed to Cloud Run (not Cloud Functions), triggered hourly via Cloud Scheduler. 43 tests passing.
 
 ## Architecture
 
 ```
 src/
-  function.ts          Cloud Function entry point + source-sheet sync flow
+  function.ts          Cloud Run HTTP handler + mode routing + sync orchestration
   adapters/
-    jobber.ts          Jobber GraphQL adapter (OAuth, throttle, job/invoice queries)
+    jobber.ts          Jobber GraphQL adapter (OAuth, Secret Manager token rotation, throttle)
     heypros.ts         HeyPros GraphQL adapter (auth, token cache, job queries)
-    sheets.ts          Google Sheets adapter (read job#s, batch update, GTP refresh, layout detection)
+    sheets.ts          Google Sheets adapter (read/write, layout detection, GTP refresh,
+                         Dashboard aggregation, Profitability Dashboard, Command log)
   config/
-    constants.ts       HEADER_ROW, HEYPROS_FILE_BASE, column layout maps (NEW_LAYOUT_COLS, LEGACY_LAYOUT_COLS)
-    env.ts             Environment config loading
+    constants.ts       HEADER_ROW, column layout maps (NEW_LAYOUT_COLS, LEGACY_LAYOUT_COLS)
+    env.ts             Environment config + Secret Manager integration
     types.ts           Shared interfaces (HeyProsJobDetail, JobberPaidJob)
 
 test/
-  output-sheet.test.ts Auto-column, multi-invoice, auto-notes, round-robin tests (41 tests)
+  output-sheet.test.ts Auto-column, multi-invoice, auto-notes, round-robin tests (43 tests)
 
 dist/                  Compiled output (tracked in git, gcp-build is no-op)
+apps-script/           Google Apps Script files (sidebar sync button, vip-email-to-slack)
 references/            Jobber schema docs, HeyPros API reference links
 ```
 
 ## Commands
 ```bash
-npm test          # Run all tests (tsx --test)
-npm run build     # TypeScript compile
+npm test          # Run all tests (tsx --test) — 43 passing
+npm run build     # TypeScript compile (dist/ must be committed)
 npm run local     # Local functions-framework server
 ```
 
 ## Deploy
 ```bash
-gcloud functions deploy kc-pp-sync \
-  --gen2 --runtime nodejs22 --region us-central1 \
-  --source . --entry-point kcPPSync \
-  --trigger-http --allow-unauthenticated \
-  --memory 256Mi --timeout 300s --max-instances 1
+gcloud run deploy kc-pp-sync \
+  --source . \
+  --region us-central1 \
+  --project aya-gservicies \
+  --no-allow-unauthenticated
 ```
+Do NOT use `gcloud functions deploy` — this is Cloud Run, not Cloud Functions.
+
+## Sync Modes
+
+The HTTP handler accepts `{"mode": "current|current-r|prev|prev-r"}` or `{"tab": "March"}`.
+
+| Mode | Resolves to | Layout |
+|---|---|---|
+| `current` | Current calendar month (e.g., "April") | New one-off |
+| `current-r` | Current month + " - R" (e.g., "April - R") | Recurring |
+| `prev` | Previous calendar month (e.g., "March") | New or legacy one-off |
+| `prev-r` | Previous month + " - R" (e.g., "March - R") | Recurring |
 
 ## Dual Layout System
 
-The sync supports TWO column layouts:
+| Tab naming | Layout | Columns | Notes |
+|---|---|---|---|
+| `March`, `April`… (no year) | New one-off | 39 cols A–AM | Multi-invoice tracker Y–AM |
+| `February 2026`, `January 2026` | Legacy one-off | 26 cols A–Z | Single invoice per row |
+| Ends with ` - R` | Recurring | 26 cols A–Z | Manual: A (Date), L (Invoice #) |
+| Ends with ` - GTP $` | GTP output | 9 cols | Not synced directly |
+| `Dashboard` | Dashboard | 15 + profitability cols | Auto-refreshed after sync |
+| `Command` | Sync log | 8 cols | Appended after every sync |
 
-- **New layout (March forward):** 39 columns (A–AM) with multi-invoice tracker
-- **Legacy layout (January 2026, February 2026):** 26 columns (A–Z), single invoice per row
-
-Detection: `isNewLayout(tabName)` checks tab naming. New = `"March"`, `"April"` (no year). Legacy = `"January 2026"` (with year).
-
-Tab naming convention:
-| Tab | Example (new) | Example (legacy) |
-|-----|---------------|-------------------|
-| Monthly one-off | `March` | `January 2026` |
-| Recurring | `March - R` | N/A |
-| Good to Pay | `March - GTP $` | `GTP $ - January` |
-
-## How the Sync Works
-
-1. Read Job #s from column F (F2:F500) of the target month tab
-2. Fetch Jobber jobs/invoices by job number (GraphQL)
-3. Fetch HeyPros WOs by purchaseOrder match (GraphQL, paginate all pages)
-4. **Filter HeyPros WOs by target month** (installationStarts date must fall within the tab's month)
-5. Round-robin assign filtered WOs to sheet rows (sorted by installationStarts ascending)
-6. **Detect layout** via `isNewLayout()` → branch column mapping
-7. Build auto-notes (X for new, Z for legacy)
-8. Batch update auto columns only (never touch manual columns)
-9. Refresh GTP $ tab (monthly tabs only)
+Detection: `isNewLayout(tabName)` — no year suffix = new layout.
 
 ## New Layout (March+): A–AM (39 columns)
 
-| Col | Header | Mode | Notes |
-|-----|--------|------|-------|
-| A | Date | Auto | From HeyPros installationStarts |
-| B | REVIEW | Manual | Checkbox |
-| C | Company Name | Auto | From HeyPros contractor |
-| D | PP Owner Name | Auto | From HeyPros contractor |
-| E | HeyPros ID # | Auto | HYPERLINK to HeyPros job page |
-| F | Job # | Manual | Input — this drives the sync |
-| G | Jobber Link | Auto | HYPERLINK to Jobber job |
-| H | Job Status | Auto | From Jobber |
-| I | Job Type | Auto | From Jobber |
-| J | Client Name | Auto | HYPERLINK to Jobber client |
-| K | Division | Auto | From Jobber |
-| **L** | **# of Invoices** | **Auto** | Count of all Jobber invoices for this Job # |
-| **M** | **Total Invoiced** | **Auto** | Sum of all invoice amounts ($#,##0.00) |
-| **N** | **All Paid?** | **Auto** | ✅ if all paid, ❌ if any unpaid |
-| O | HeyPros Invoice # | Auto | Primary accepted invoice (was Q) |
-| P | Sub Invoice Amount | Auto | Sum of accepted HP invoices (was R) |
-| **Q** | **KCPC Released Amount** | **Manual** | Currency (was S) |
-| R | Contractor Invoice PDF | Auto | HYPERLINK or "See Auto Note" (was T) |
-| **S** | **Payment Status** | **Manual** | Dropdown: Good to Pay, NO CLIENT PAY, On Hold, Pending Approval in HP (was U) |
-| **T** | **Payment Tracking** | **Manual** | Dropdown: PAID, AWAITING FOR PAYMENT (was V) |
-| **U** | **Payment Method** | **Manual** | Dropdown: QBO-Billpay- ACH/Check, ACH - 9292 (was W) |
-| **V** | **Date of Payment** | **Manual** | (was X) |
-| **W** | **Notes / Remarks** | **Manual** | Human-owned, sync NEVER touches (was Y) |
-| X | Auto Notes | Auto | Rebuilt every sync (was Z) |
-| Y–AM | Invoice Tracker | Auto | 5 slots × 3 cols (Invoice #, Amount, Paid?) |
+| Col | Header | Mode |
+|-----|--------|------|
+| A | Date | Auto |
+| B | REVIEW | Manual |
+| C | Company Name | Auto |
+| D | PP Owner Name | Auto |
+| E | HeyPros ID # | Auto (HYPERLINK) |
+| F | Job # | Manual — drives the sync |
+| G | Jobber Link | Auto (HYPERLINK) |
+| H | Job Status | Auto |
+| I | Job Type | Auto |
+| J | Client Name | Auto (HYPERLINK) |
+| K | Division | Auto |
+| L | # of Invoices | Auto |
+| M | Total Invoiced | Auto (currency) |
+| N | All Paid? | Auto (✅/❌) |
+| O | HeyPros Invoice # | Auto |
+| P | Sub Invoice Amount | Auto |
+| Q | KCPC Released Amount | **Manual** |
+| R | Contractor Invoice PDF | Auto (HYPERLINK) |
+| S | Payment Status | **Manual** dropdown |
+| T | Payment Tracking | **Manual** dropdown |
+| U | Payment Method | **Manual** dropdown |
+| V | Date of Payment | **Manual** |
+| W | Notes / Remarks | **Manual** |
+| X | Auto Notes | Auto (rebuilt every sync) |
+| Y–AM | Invoice Tracker | Auto (5 slots × 3 cols) |
+
+**Manual columns (NEVER auto-written): B, F, Q, S, T, U, V, W**
 
 ### Invoice Tracker Block (Y–AM)
 
@@ -110,20 +111,12 @@ Tab naming convention:
 | 4 | AH | AI | AJ |
 | 5 | AK | AL | AM |
 
-Sorted by invoice number ascending. Auto-populated from Jobber API. >5 invoices → auto note warning.
-
-### New Layout Auto Columns
-A, C, D, E, G, H, I, J, K, L, M, N, O, P, R, X, Y–AM
-
-### New Layout Manual Columns (never auto-written)
-B, F, Q, S, T, U, V, W
-
-## Legacy Layout (Jan/Feb): A–Z (26 columns)
+## Legacy Layout (Jan/Feb 2026): A–Z (26 columns)
 
 | Col | Header | Mode |
 |-----|--------|------|
 | A–K | Same as new | Same |
-| L | Invoice Number | Auto (HYPERLINK) |
+| L | Invoice Number | Auto (HYPERLINK) — `"-"` = manual hold |
 | M | Invoice Total | Auto |
 | N | Invoice Issued Date | Auto |
 | O | Invoice Status | Auto |
@@ -139,72 +132,69 @@ B, F, Q, S, T, U, V, W
 | Y | Notes / Remarks | Manual |
 | Z | Auto Notes | Auto |
 
-Legacy supports manual hold: Invoice # column L = "-" → skip M/N/O/P sync.
+## Recurring Tab Rules
+- Manual input: **Job #** (col F) and **Invoice #** (col L) only
+- WOs assigned round-robin per job number, sorted by `installationStarts` ascending
+- Invoice # three-state: blank → auto-populate | `"-"` → skip invoice sync | number → look up specific invoice
 
 ## GTP $ Tab
+Filters monthly tab for unpaid GTP rows:
+- New layout: N = ✅, S = "Good to Pay", T = "AWAITING FOR PAYMENT"
+- Legacy: O = "Paid"/✅, U = "Good to Pay", V = "AWAITING FOR PAYMENT"
 
-Filters monthly tab for rows meeting criteria:
-- **New layout:** N (All Paid?) = ✅, S (Payment Status) = "Good to Pay", T (Payment Tracking) = "AWAITING FOR PAYMENT"
-- **Legacy layout:** O (Invoice Status) = "Paid", U = "Good to Pay", V = "AWAITING FOR PAYMENT"
+Output columns: Date, Company Name, PP Owner, Job #, Sub Invoice Amount, All Paid?, Payment Status, Payment Tracking, Client Name
 
-Output: Date, Company Name, PP Owner, Job #, Sub Invoice Amount, Paid check, Payment Status, Payment Tracking
+## Dashboard Tab
+Auto-refreshed after every sync. Two sections:
 
-## Invoice Status Filtering (HeyPros)
+**Payment Status section (rows 1–17):** 15 columns — Month | Total Jobs | Total $ | # Paid | % Paid | # Good to Pay | % GTP | # On Hold | % On Hold | # Pending Approval | % PA | # No Client Pay | % NCP | # Blank | % Blank. Recurring rows merged into same month. January excluded. YTD in row 14.
 
-| Status | Count in amount? | Auto note |
-|--------|-----------------|-----------|
-| Accepted | ✅ Yes | (none) |
-| Pending Approval | ❌ No | ⏳ Pending: $X |
-| Rejected | ❌ No | ⚠️ Rejected: $X |
-| Canceled | ❌ No | ⚠️ Canceled: $X |
-| Unknown | ❌ No | ⚠️ Unknown status: $X |
+**Profitability section (rows 18+):** Revenue, Labor, Gross Profit, Margin % by month. Dedup logic: new one-off by Job#, legacy by Invoice#, recurring by Invoice# when populated. Margin color-coded (green ≥65%, yellow 40–65%, red <40%).
 
-## Auto Notes (X column for new, Z for legacy)
+## Command Tab (Sync Log)
+Every sync appends: Timestamp | Tab | Status | Jobs | Rows | GTP Rows | Elapsed | Error
 
-Rebuilt from scratch every sync. Conditions joined with " | ":
+## Auto Notes (col X for new, Z for legacy)
 
 | Condition | Note |
 |-----------|------|
-| 2+ accepted HP invoices | ℹ️ N accepted invoices (...) — download PDFs from HeyPros |
+| 2+ accepted HP invoices | ℹ️ N accepted invoices |
 | Rejected invoice | ⚠️ Rejected: $X |
 | Canceled invoice | ⚠️ Canceled: $X |
 | Pending invoice | ⏳ Pending: $X |
-| Unknown status | ⚠️ Unknown status "label": $X |
 | No HeyPros match | ⚠️ WO# not found in HeyPros |
-| Multi-contractor | ℹ️ Multi-contractor job (N WOs this month) |
+| Multi-contractor | ℹ️ Multi-contractor job (N WOs) |
 | No Jobber data | ⚠️ Job# not found in Jobber |
 | Extra row (no WO) | ⚠️ No HeyPros WO for this row |
-| Manual hold (legacy) | ⏸️ Manual invoice hold (L = "-") |
 | Shared invoice | 🔗 Shared Invoice #X (also on row N) |
-| >5 invoices (new) | ⚠️ Job has N invoices — only first 5 shown in tracker |
-| Partial payment (new) | 🔴 N of M client invoices unpaid |
+| >5 invoices | ⚠️ Job has N invoices — only first 5 shown |
+| Partial payment | 🔴 N of M client invoices unpaid |
 
 ## Key Technical Details
 
-- HeyPros amounts are in **CENTS** — divide by 100 for dollars
-- HeyPros hashidNumeric displayed as dashed: 9331562 → 9-331-562
+- HeyPros amounts are in **CENTS** — divide by 100
+- HeyPros hashidNumeric displayed dashed: `9331562` → `9-331-562`
 - HeyPros job URL: `https://kc-power-clean.heypros.com/job/{hashid}`
-- HeyPros file URL: `https://hey-pros-api.birdsdontexist.com/files/{fileName}`
-- Jobber uses `searchTerm` for fuzzy search, then exact integer filter client-side
-- Jobber `receivedDate` = paid date (no `paidDate` field exists)
+- Jobber `searchTerm` is fuzzy — always filter exact match client-side
+- Jobber `receivedDate` = paid date (no `paidDate` field)
 - All sheet writes use `USER_ENTERED` (required for HYPERLINK formulas)
 - Dates formatted as M/D/YYYY using UTC
-- Cloud Functions can only write to `/tmp` (token caches live there)
-- HeyPros signIn rate limited: max 1 attempt per 15 min, tokens last 60 min
-- `isNewLayout()` detects layout by tab name (no year suffix = new layout)
+- HeyPros signIn rate limit: max 1 attempt per 15 min, tokens last 60 min
+- Jobber tokens auto-rotate via Secret Manager after each refresh
+- `gcp-build` script must remain `"true"` (no-op) — dist/ is pre-committed
 
 ## Gotchas
 
 - HeyPros WO# (`purchaseOrder`) is NOT unique — multiple WOs can share one Job#
-- HeyPros `jobsDashboard` does NOT return Closed/Paid WOs — purged from API
-- HeyPros introspection is disabled — cannot query `__schema` or `__type`
-- Jobber `searchTerm` is fuzzy — always filter exact match client-side
-- `gcp-build` script is a no-op (dist/ pre-built locally) — do not change this
-- **Legacy tabs (Jan/Feb) have different column positions** — all code must branch on `isNewLayout()`
+- HeyPros `jobsDashboard` does NOT return Closed/Paid WOs
+- HeyPros introspection is disabled
+- `gcp-build` must stay no-op — do not change
+- Legacy tabs (Jan/Feb) have different column positions — all code must branch on `isNewLayout()`
+- This is Cloud Run, not Cloud Functions — `gcloud run deploy`, not `gcloud functions deploy`
 
 ## What NOT to Touch
 
 - Manual columns: new layout (B, F, Q, S, T, U, V, W) / legacy (B, F, S, U, V, W, X, Y)
-- Conditional formatting rules (38 per tab on March)
-- Data validations (dropdowns on S, T, U, H, I, K)
-- `gcp-build` script behavior (must remain `"true"` — no-op)
+- Conditional formatting rules (40 per monthly tab)
+- Data validations (dropdowns on H, I, K, S, T, U)
+- `gcp-build` script behavior
