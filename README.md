@@ -103,6 +103,63 @@ Auto-populated in col X (one-off) / col Z (legacy/recurring). Flags:
 - Multi-WO job
 - Recurring job with no invoice
 
+## Google Cloud integration
+
+The service runs entirely on Google Cloud free tier infrastructure under project **`aya-gservicies`**.
+
+### Cloud Run
+
+The sync function is deployed as a containerized HTTP service:
+
+| Property | Value |
+|---|---|
+| Service | `kc-pp-sync` |
+| Region | `us-central1` |
+| Latest revision | `kc-pp-sync-00053-hg4` |
+| Memory | 512 MiB |
+| CPU | 0.1666 vCPU |
+| Auth | Requires identity token (not public) |
+| Service account | `823212137840-compute@developer.gserviceaccount.com` |
+
+Cloud Run builds directly from source via `gcloud run deploy --source .` — no manual Docker builds required.
+
+### Cloud Scheduler
+
+Four jobs trigger the service on a staggered schedule (UTC) to avoid contention:
+
+| Job | Cron | Mode | Description |
+|---|---|---|---|
+| `kc-pp-sync-hourly` | `0 * * * *` | `current` | Current month one-off, every hour at :00 |
+| `kc-pp-sync-recurring` | `5 * * * *` | `current-r` | Current month recurring, every hour at :05 |
+| `kc-pp-sync-prev-month` | `10 */4 * * *` | `prev` | Previous month one-off, every 4h at :10 |
+| `kc-pp-sync-prev-recurring` | `15 */4 * * *` | `prev-r` | Previous month recurring, every 4h at :15 |
+
+Scheduler authenticates to Cloud Run using OIDC tokens issued to the service account.
+
+### Secret Manager
+
+OAuth tokens and credentials are stored as Secret Manager secrets (never in env vars or code):
+
+| Secret | Description |
+|---|---|
+| `jobber-tokens` | Jobber OAuth token JSON — auto-rotated by the service after each token refresh |
+| `heypros-credentials` | HeyPros login credentials |
+| `spreadsheet-id` | Target Google Sheet ID |
+
+The service reads secrets at runtime via the Secret Manager REST API using the Cloud Run service account's default credentials. Jobber token rotation writes the updated token back to Secret Manager immediately after each refresh so all future invocations use the latest token.
+
+### Google Sheets
+
+Data is written to the KC PP Sync spreadsheet via the **Google Sheets API** (googleapis Node.js client), authenticated using Application Default Credentials (ADC) inherited from the Cloud Run service account. The service account has been granted Editor access to the target spreadsheet.
+
+### Cost
+
+The entire stack runs within GCP free tier limits:
+- Cloud Run: free tier covers ~2M requests/month; this service runs ~700 invocations/month
+- Cloud Scheduler: 3 free jobs/month per project; we use 4 (minimal overage ~$0.10/month)
+- Secret Manager: free tier covers 6 active secret versions and 10K access operations/month
+- No persistent storage, no VPC, no load balancer
+
 ## Local development
 
 ```bash
