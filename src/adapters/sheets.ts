@@ -586,8 +586,9 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       const subAmount = parseDollarAmount((row[cols.subInvoiceAmount] ?? "").toString());
       const allPaidVal = (row[cols.allPaid] ?? "").toString().trim();
 
-      // Separate "No Payment" rows
-      if (paymentStatus.toLowerCase() === "no payment") {
+      // Separate "No Payment" rows (also catches "NO CLIENT PAY" and other no-pay variants)
+      const statusLowerCheck = paymentStatus.toLowerCase();
+      if (statusLowerCheck === "no payment" || statusLowerCheck === "no client pay") {
         stats.noPaymentCount++;
         stats.noPaymentAmount += subAmount;
         continue;
@@ -609,7 +610,8 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       } else if (statusLower === "on hold") {
         stats.onHold++;
         stats.onHoldAmount += subAmount;
-      } else if (statusLower === "pending approval") {
+      } else if (statusLower === "pending approval" || statusLower.startsWith("pending approval")) {
+        // Catches "Pending Approval in HP" and similar variants
         stats.pending++;
         stats.pendingAmount += subAmount;
       } else {
