@@ -967,3 +967,59 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
   console.log(`  Dashboard: ${sortedMonths.length} months, ${totalRows} total jobs`);
   return totalRows;
 }
+
+/**
+ * Extend all conditional format rules on a tab so they cover up to maxRow rows.
+ * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
+ */
+export async function extendTabCF(spreadsheetId: string, tabName: string, maxRow: number = 500): Promise<number> {
+  const sheets = await getSheetsClient();
+
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties,conditionalFormats)",
+  });
+
+  const sheet = meta.data.sheets?.find((s: any) => s.properties?.title === tabName);
+  if (!sheet) throw new Error(`Tab "${tabName}" not found`);
+
+  const sheetId = sheet.properties!.sheetId!;
+  const cf: any[] = sheet.conditionalFormats || [];
+
+  if (cf.length === 0) {
+    console.log(`  extendTabCF: no CF rules on "${tabName}"`);
+    return 0;
+  }
+
+  // Find rules that don't cover up to maxRow
+  const toExtend = cf
+    .map((rule: any, index: number) => ({ rule, index }))
+    .filter(({ rule }: any) => {
+      const ranges = rule.ranges || [];
+      return ranges.some((r: any) => r.sheetId === sheetId && (r.endRowIndex || 0) < maxRow);
+    });
+
+  if (toExtend.length === 0) {
+    console.log(`  extendTabCF: all ${cf.length} rules already cover ≥${maxRow} rows`);
+    return 0;
+  }
+
+  // Update each rule — extend all ranges to maxRow
+  const requests = toExtend.map(({ rule, index }: any) => ({
+    updateConditionalFormatRule: {
+      sheetId,
+      index,
+      rule: {
+        ...rule,
+        ranges: rule.ranges.map((r: any) => ({
+          ...r,
+          endRowIndex: Math.max(r.endRowIndex || 0, maxRow),
+        })),
+      },
+    },
+  }));
+
+  await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+  console.log(`  extendTabCF: extended ${requests.length} CF rules on "${tabName}" to row ${maxRow}`);
+  return requests.length;
+}

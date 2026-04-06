@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, extendTabCF } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -622,6 +622,95 @@ export async function kcPPSync(req, res) {
         }
         else if (bodyTab && typeof bodyTab === "string") {
             config.sheets.sheetsTab = bodyTab;
+        }
+        // Handle fixStaleCF: remove stale row-scoped CF rules on a tab
+        // Deletes rules with narrow startRowIndex (e.g., row 200+) that override global rules
+        if (req.body?.fixStaleCF) {
+            const tabName = req.body.fixStaleCF;
+            const { google } = await import("googleapis");
+            const gauth2 = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+            const sheets2 = google.sheets({ version: "v4", auth: gauth2 });
+            const meta2 = await sheets2.spreadsheets.get({
+                spreadsheetId: config.sheets.spreadsheetId,
+                fields: "sheets(properties,conditionalFormats)",
+            });
+            const sheet2 = meta2.data.sheets?.find((s) => s.properties?.title === tabName);
+            if (!sheet2) {
+                res.json({ error: `Tab "${tabName}" not found` });
+                return;
+            }
+            const sheetId2 = sheet2.properties.sheetId;
+            const cf2 = sheet2.conditionalFormats || [];
+            // Find rules where ALL ranges have startRowIndex >= 100 (stale row-anchored rules)
+            const staleIdxs = [];
+            const partialFix = [];
+            cf2.forEach((rule, idx) => {
+                const ranges = rule.ranges || [];
+                const staleRanges = ranges.filter((r) => r.startRowIndex >= 100);
+                const cleanRanges = ranges.filter((r) => !r.startRowIndex || r.startRowIndex < 100);
+                if (staleRanges.length === ranges.length) {
+                    // All ranges are stale — delete entire rule
+                    staleIdxs.push(idx);
+                }
+                else if (staleRanges.length > 0 && cleanRanges.length > 0) {
+                    // Mix — keep clean ranges, remove stale
+                    partialFix.push({ idx, cleanRanges });
+                }
+            });
+            // Delete fully-stale rules (in reverse order to preserve indices)
+            const deleteRequests = [...staleIdxs].sort((a, b) => b - a).map(idx => ({
+                deleteConditionalFormatRule: { sheetId: sheetId2, index: idx }
+            }));
+            // Update mixed rules — replace with clean ranges only
+            const updateRequests = partialFix.map(({ idx, cleanRanges }) => ({
+                updateConditionalFormatRule: {
+                    sheetId: sheetId2,
+                    index: idx,
+                    rule: { ...cf2[idx], ranges: cleanRanges },
+                }
+            }));
+            const allRequests = [...updateRequests, ...deleteRequests];
+            if (allRequests.length > 0) {
+                await sheets2.spreadsheets.batchUpdate({
+                    spreadsheetId: config.sheets.spreadsheetId,
+                    requestBody: { requests: allRequests },
+                });
+            }
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            res.json({ status: "ok", elapsed: `${elapsed}s`, tab: tabName, deletedRules: staleIdxs.length, patchedRules: partialFix.length });
+            return;
+        }
+        // Handle debugCF request: dump CF rules covering a specific column on a tab
+        if (req.body?.debugCF) {
+            const tabName = req.body.debugCF;
+            const targetCol = req.body.col ?? 18; // default col S (0-indexed)
+            const { google } = await import("googleapis");
+            const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+            const sheets = google.sheets({ version: "v4", auth: gauth });
+            const meta = await sheets.spreadsheets.get({
+                spreadsheetId: config.sheets.spreadsheetId,
+                fields: "sheets(properties,conditionalFormats)",
+            });
+            const sheet = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+            if (!sheet) {
+                res.json({ error: `Tab "${tabName}" not found` });
+                return;
+            }
+            const cf = sheet.conditionalFormats || [];
+            const matching = cf
+                .map((rule, idx) => ({ idx, rule }))
+                .filter(({ rule }) => rule.ranges?.some((r) => r.startColumnIndex <= targetCol && (!r.endColumnIndex || r.endColumnIndex > targetCol)));
+            res.json({ tab: tabName, col: targetCol, totalRules: cf.length, matchingRules: matching.length, rules: matching });
+            return;
+        }
+        // Handle extendCF request: extend CF rules on a tab to 500 rows
+        if (req.body?.extendCF) {
+            const tabName = req.body.extendCF;
+            console.log(`Extending CF rules on "${tabName}" to 500 rows`);
+            const count = await extendTabCF(config.sheets.spreadsheetId, tabName, 500);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            res.json({ status: "ok", elapsed: `${elapsed}s`, tab: tabName, rulesExtended: count });
+            return;
         }
         // Handle refreshDashboard-only request
         if (req.body?.refreshDashboard === true && !req.body?.mode && !req.body?.tab) {

@@ -82,3 +82,8 @@ export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry
  * Reads all active month + recurring tabs, aggregates by month, writes summary.
  */
 export declare function refreshDashboard(spreadsheetId: string): Promise<number>;
+/**
+ * Extend all conditional format rules on a tab so they cover up to maxRow rows.
+ * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
+ */
+export declare function extendTabCF(spreadsheetId: string, tabName: string, maxRow?: number): Promise<number>;
