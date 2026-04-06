@@ -9,7 +9,7 @@ import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard } from "./adapters/sheets.js";
 import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -697,12 +697,34 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       config.sheets.sheetsTab = bodyTab;
     }
 
+    // Handle refreshDashboard-only request
+    if (req.body?.refreshDashboard === true && !req.body?.mode && !req.body?.tab) {
+      console.log("Dashboard-only refresh requested");
+      const dashCount = await refreshDashboard(config.sheets.spreadsheetId);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      await logSyncResult(config.sheets.spreadsheetId, {
+        timestamp: new Date().toISOString(),
+        tab: "Dashboard",
+        status: "✅ OK",
+        jobs: dashCount,
+        rows: 0,
+        gtpRows: 0,
+        elapsed: `${elapsed}s`,
+        error: "",
+      }).catch((e) => console.warn(`  Command log failed: ${e}`));
+
+      res.status(200).json({ status: "ok", elapsed: `${elapsed}s`, dashboard: true, totalJobs: dashCount });
+      return;
+    }
+
     // Detect recurring tab (ends with " - R")
     const isRecurringTab = config.sheets.sheetsTab.endsWith(" - R");
 
     let updateCount: number;
     let jobCount: number;
     let gtpCount = 0;
+    let dashboardCount = 0;
 
     if (isRecurringTab) {
       console.log(`Recurring tab detected: ${config.sheets.sheetsTab}`);
@@ -723,6 +745,17 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       }
     }
 
+    // Refresh Dashboard tab after every sync
+    if (!config.sheets.dryRun) {
+      console.log("Refreshing Dashboard tab...");
+      try {
+        dashboardCount = await refreshDashboard(config.sheets.spreadsheetId);
+        console.log(`  Dashboard: ${dashboardCount} total jobs`);
+      } catch (e) {
+        console.warn(`  Dashboard refresh failed: ${e}`);
+      }
+    }
+
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const summary = {
       status: "ok",
@@ -732,6 +765,7 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       jobNumbers: jobCount,
       updatedRows: updateCount,
       gtpRows: gtpCount,
+      dashboardJobs: dashboardCount,
       spreadsheetId: config.sheets.dryRun ? null : config.sheets.spreadsheetId,
     };
     console.log(`Done in ${elapsed}s`, JSON.stringify(summary));
@@ -747,6 +781,20 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       elapsed: `${elapsed}s`,
       error: "",
     }).catch((e) => console.warn(`  Command log failed: ${e}`));
+
+    // Log dashboard refresh separately
+    if (dashboardCount > 0) {
+      await logSyncResult(config.sheets.spreadsheetId, {
+        timestamp: new Date().toISOString(),
+        tab: "Dashboard",
+        status: "✅ OK",
+        jobs: dashboardCount,
+        rows: 0,
+        gtpRows: 0,
+        elapsed: `${elapsed}s`,
+        error: "",
+      }).catch((e) => console.warn(`  Dashboard log failed: ${e}`));
+    }
 
     res.status(200).json(summary);
   } catch (err) {

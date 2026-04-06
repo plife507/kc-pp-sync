@@ -374,3 +374,454 @@ export async function logSyncResult(spreadsheetId, entry) {
     });
     console.log(`  Command log: ${entry.status} — ${entry.tab}`);
 }
+// ---------------------------------------------------------------------------
+// Dashboard tab — payment completion rates
+// ---------------------------------------------------------------------------
+const DASHBOARD_TAB = "Dashboard";
+const MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+];
+/**
+ * Determine column indices for dashboard-relevant columns based on tab name.
+ * Recurring tabs (" - R") ALWAYS use legacy positions.
+ * Legacy one-off tabs (contains year, e.g. "January 2026") use legacy positions.
+ * New one-off tabs (no year, e.g. "March") use new positions.
+ */
+function getDashboardColIndices(tabName) {
+    const isRecurring = tabName.endsWith(" - R");
+    const isLegacy = /^\w+\s+\d{4}$/.test(tabName);
+    if (isRecurring || isLegacy) {
+        return { paymentStatus: 20, subInvoiceAmount: 17, allPaid: 14 };
+    }
+    // New layout
+    return { paymentStatus: 18, subInvoiceAmount: 15, allPaid: 13 };
+}
+/**
+ * Extract month name from a tab name.
+ * "March" → "March", "January 2026" → "January", "April - R" → "April"
+ */
+function extractMonthName(tabName) {
+    const base = tabName.replace(/ - R$/, "").replace(/\s+\d{4}$/, "").trim();
+    return base;
+}
+/**
+ * Parse a dollar amount string from the sheet.
+ * Handles: "$1,234.56", "1234.56", "$1234", etc.
+ */
+function parseDollarAmount(val) {
+    if (!val)
+        return 0;
+    const cleaned = val.replace(/[$,]/g, "").trim();
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+}
+/**
+ * Refresh the Dashboard tab with payment completion stats across all month tabs.
+ * Reads all active month + recurring tabs, aggregates by month, writes summary.
+ */
+export async function refreshDashboard(spreadsheetId) {
+    const sheets = await getSheetsClient();
+    // 1. Discover all tabs in the spreadsheet
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets.properties",
+    });
+    const allTabs = (meta.data.sheets ?? [])
+        .map((s) => s.properties?.title)
+        .filter(Boolean);
+    // 2. Filter to scannable tabs: month one-off + recurring, exclude Log/Dashboard/GTP
+    const scanTabs = allTabs.filter((tab) => {
+        const lower = tab.toLowerCase();
+        if (tab === "Log" || tab === DASHBOARD_TAB)
+            return false;
+        if (lower.includes("gtp"))
+            return false;
+        // Must be a recognized month tab or recurring tab
+        const monthName = extractMonthName(tab);
+        return MONTH_NAMES.includes(monthName);
+    });
+    console.log(`  Dashboard: scanning ${scanTabs.length} tabs: ${scanTabs.join(", ")}`);
+    // 3. Aggregate stats by month
+    const statsByMonth = new Map();
+    for (const tab of scanTabs) {
+        const cols = getDashboardColIndices(tab);
+        const maxCol = Math.max(cols.paymentStatus, cols.subInvoiceAmount, cols.allPaid);
+        // Convert max column index to letter for range
+        const endColLetter = String.fromCharCode(65 + Math.min(maxCol, 25));
+        const range = maxCol > 25
+            ? `'${tab}'!A2:Z500`
+            : `'${tab}'!A2:${endColLetter}500`;
+        let rows;
+        try {
+            const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+            rows = (res.data.values ?? []);
+        }
+        catch (e) {
+            if (e?.message?.includes("Unable to parse range")) {
+                console.log(`  Dashboard: tab '${tab}' not found — skipping`);
+                continue;
+            }
+            throw e;
+        }
+        const monthName = extractMonthName(tab);
+        const monthIndex = MONTH_NAMES.indexOf(monthName);
+        if (!statsByMonth.has(monthName)) {
+            statsByMonth.set(monthName, {
+                month: monthName,
+                monthIndex,
+                total: 0, totalAmount: 0,
+                paid: 0, paidAmount: 0,
+                goodToPay: 0, goodToPayAmount: 0,
+                onHold: 0, onHoldAmount: 0,
+                pending: 0, pendingAmount: 0,
+                blank: 0, blankAmount: 0,
+                noPaymentCount: 0, noPaymentAmount: 0,
+            });
+        }
+        const stats = statsByMonth.get(monthName);
+        for (const row of rows) {
+            // Skip rows with blank Job # (col F, index 5)
+            const jobNum = (row[5] ?? "").toString().trim();
+            if (!jobNum)
+                continue;
+            const paymentStatus = (row[cols.paymentStatus] ?? "").toString().trim();
+            const subAmount = parseDollarAmount((row[cols.subInvoiceAmount] ?? "").toString());
+            const allPaidVal = (row[cols.allPaid] ?? "").toString().trim();
+            // Separate "No Payment" rows
+            if (paymentStatus.toLowerCase() === "no payment") {
+                stats.noPaymentCount++;
+                stats.noPaymentAmount += subAmount;
+                continue;
+            }
+            stats.total++;
+            stats.totalAmount += subAmount;
+            // Determine if "paid" — new layout: ✅, legacy: "Paid" or "✅"
+            const isPaid = allPaidVal === "✅" || allPaidVal === "Paid";
+            const statusLower = paymentStatus.toLowerCase();
+            if (statusLower === "paid" || isPaid) {
+                stats.paid++;
+                stats.paidAmount += subAmount;
+            }
+            else if (statusLower === "good to pay") {
+                stats.goodToPay++;
+                stats.goodToPayAmount += subAmount;
+            }
+            else if (statusLower === "on hold") {
+                stats.onHold++;
+                stats.onHoldAmount += subAmount;
+            }
+            else if (statusLower === "pending approval") {
+                stats.pending++;
+                stats.pendingAmount += subAmount;
+            }
+            else {
+                // Blank or unknown
+                stats.blank++;
+                stats.blankAmount += subAmount;
+            }
+        }
+    }
+    // 4. Sort months by index and build output arrays
+    const sortedMonths = [...statsByMonth.values()].sort((a, b) => a.monthIndex - b.monthIndex);
+    // Main table header
+    const mainHeader = [
+        "Month", "Total Jobs", "Total $",
+        "# Paid", "% Paid",
+        "# Good to Pay", "% Good to Pay",
+        "# On Hold", "% On Hold",
+        "# Pending", "% Pending",
+        "# Blank", "% Blank",
+    ];
+    const pct = (n, total) => total > 0 ? n / total : 0;
+    const mainRows = [mainHeader];
+    // YTD accumulators
+    let ytdTotal = 0, ytdAmount = 0, ytdPaid = 0, ytdGtp = 0, ytdHold = 0, ytdPending = 0, ytdBlank = 0;
+    for (const s of sortedMonths) {
+        if (s.total === 0 && s.noPaymentCount === 0)
+            continue; // skip months with no data at all
+        mainRows.push([
+            s.month,
+            s.total,
+            s.totalAmount,
+            s.paid, pct(s.paid, s.total),
+            s.goodToPay, pct(s.goodToPay, s.total),
+            s.onHold, pct(s.onHold, s.total),
+            s.pending, pct(s.pending, s.total),
+            s.blank, pct(s.blank, s.total),
+        ]);
+        ytdTotal += s.total;
+        ytdAmount += s.totalAmount;
+        ytdPaid += s.paid;
+        ytdGtp += s.goodToPay;
+        ytdHold += s.onHold;
+        ytdPending += s.pending;
+        ytdBlank += s.blank;
+    }
+    // YTD row at row 14 (pad if needed)
+    while (mainRows.length < 13)
+        mainRows.push([]); // rows 2-13 = up to 12 months, pad empties
+    mainRows.push([
+        "YTD",
+        ytdTotal,
+        ytdAmount,
+        ytdPaid, pct(ytdPaid, ytdTotal),
+        ytdGtp, pct(ytdGtp, ytdTotal),
+        ytdHold, pct(ytdHold, ytdTotal),
+        ytdPending, pct(ytdPending, ytdTotal),
+        ytdBlank, pct(ytdBlank, ytdTotal),
+    ]);
+    // Section 2: No Payment notes (row 16+)
+    const noPayHeader = ["Excluded — No Payment (jobs that will never be paid)"];
+    const noPaySubHeader = ["Month", "# Jobs Excluded", "Total $ Excluded"];
+    const noPayRows = [];
+    let ytdNoPayCount = 0, ytdNoPayAmount = 0;
+    for (const s of sortedMonths) {
+        if (s.noPaymentCount === 0)
+            continue;
+        noPayRows.push([s.month, s.noPaymentCount, s.noPaymentAmount]);
+        ytdNoPayCount += s.noPaymentCount;
+        ytdNoPayAmount += s.noPaymentAmount;
+    }
+    // 5. Ensure Dashboard tab exists
+    const dashboardExists = allTabs.includes(DASHBOARD_TAB);
+    let dashboardSheetId;
+    if (!dashboardExists) {
+        console.log("  Dashboard tab: creating...");
+        const addRes = await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{ addSheet: { properties: { title: DASHBOARD_TAB } } }],
+            },
+        });
+        dashboardSheetId = addRes.data.replies?.[0]?.addSheet?.properties?.sheetId ?? 0;
+    }
+    else {
+        const sheet = meta.data.sheets?.find((s) => s.properties?.title === DASHBOARD_TAB);
+        dashboardSheetId = sheet?.properties?.sheetId ?? 0;
+    }
+    // 6. Clear Dashboard tab
+    try {
+        await sheets.spreadsheets.values.clear({
+            spreadsheetId,
+            range: `'${DASHBOARD_TAB}'!A1:M100`,
+        });
+    }
+    catch {
+        // tab may be empty
+    }
+    // 7. Write main table (rows 1-14)
+    await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${DASHBOARD_TAB}'!A1:M${mainRows.length}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: mainRows },
+    });
+    // 8. Write No Payment section (row 16+)
+    const noPayStartRow = mainRows.length + 2; // blank row after main table
+    const allNoPayRows = [
+        noPayHeader,
+        noPaySubHeader,
+        ...noPayRows,
+    ];
+    if (ytdNoPayCount > 0) {
+        allNoPayRows.push(["YTD", ytdNoPayCount, ytdNoPayAmount]);
+    }
+    if (allNoPayRows.length > 2) { // only write if there's data beyond headers
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `'${DASHBOARD_TAB}'!A${noPayStartRow}:M${noPayStartRow + allNoPayRows.length - 1}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: allNoPayRows },
+        });
+    }
+    // 9. Apply formatting via batchUpdate
+    const ytdRowIndex = mainRows.length - 1; // 0-based index of YTD row
+    const noPayHeaderRowIndex = noPayStartRow - 1; // 0-based
+    const noPaySubHeaderRowIndex = noPayStartRow; // 0-based
+    const noPayYtdRowIndex = noPayStartRow + allNoPayRows.length - 2; // 0-based
+    const formatRequests = [];
+    // Header row (row 1): bold, blue bg, white text
+    formatRequests.push({
+        repeatCell: {
+            range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 13 },
+            cell: {
+                userEnteredFormat: {
+                    backgroundColor: { red: 26 / 255, green: 115 / 255, blue: 232 / 255 },
+                    textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                },
+            },
+            fields: "userEnteredFormat(backgroundColor,textFormat)",
+        },
+    });
+    // YTD row: bold, light blue bg
+    formatRequests.push({
+        repeatCell: {
+            range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex, endRowIndex: ytdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 13 },
+            cell: {
+                userEnteredFormat: {
+                    backgroundColor: { red: 207 / 255, green: 226 / 255, blue: 255 / 255 },
+                    textFormat: { bold: true },
+                },
+            },
+            fields: "userEnteredFormat(backgroundColor,textFormat)",
+        },
+    });
+    // % columns: E(4), G(6), I(8), K(10), M(12) — percentage format
+    const pctCols = [4, 6, 8, 10, 12];
+    for (const col of pctCols) {
+        formatRequests.push({
+            repeatCell: {
+                range: { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: col, endColumnIndex: col + 1 },
+                cell: { userEnteredFormat: { numberFormat: { type: "PERCENT", pattern: "0.0%" } } },
+                fields: "userEnteredFormat.numberFormat",
+            },
+        });
+    }
+    // $ columns: C(2) and any $ in no-pay section — currency format
+    formatRequests.push({
+        repeatCell: {
+            range: { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 2, endColumnIndex: 3 },
+            cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
+            fields: "userEnteredFormat.numberFormat",
+        },
+    });
+    // No Payment section header: bold, orange bg
+    if (allNoPayRows.length > 2) {
+        formatRequests.push({
+            repeatCell: {
+                range: { sheetId: dashboardSheetId, startRowIndex: noPayHeaderRowIndex, endRowIndex: noPayHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 13 },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: { red: 255 / 255, green: 229 / 255, blue: 178 / 255 },
+                        textFormat: { bold: true },
+                    },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat)",
+            },
+        });
+        // No Payment sub-header: bold
+        formatRequests.push({
+            repeatCell: {
+                range: { sheetId: dashboardSheetId, startRowIndex: noPaySubHeaderRowIndex, endRowIndex: noPaySubHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                cell: { userEnteredFormat: { textFormat: { bold: true } } },
+                fields: "userEnteredFormat.textFormat",
+            },
+        });
+        // No Payment $ column (C, index 2)
+        formatRequests.push({
+            repeatCell: {
+                range: {
+                    sheetId: dashboardSheetId,
+                    startRowIndex: noPaySubHeaderRowIndex + 1,
+                    endRowIndex: noPayStartRow + allNoPayRows.length - 1,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3,
+                },
+                cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
+                fields: "userEnteredFormat.numberFormat",
+            },
+        });
+        // No Payment YTD row: bold
+        if (ytdNoPayCount > 0) {
+            formatRequests.push({
+                repeatCell: {
+                    range: { sheetId: dashboardSheetId, startRowIndex: noPayYtdRowIndex, endRowIndex: noPayYtdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 3 },
+                    cell: {
+                        userEnteredFormat: {
+                            backgroundColor: { red: 207 / 255, green: 226 / 255, blue: 255 / 255 },
+                            textFormat: { bold: true },
+                        },
+                    },
+                    fields: "userEnteredFormat(backgroundColor,textFormat)",
+                },
+            });
+        }
+    }
+    // Frozen header row
+    formatRequests.push({
+        updateSheetProperties: {
+            properties: { sheetId: dashboardSheetId, gridProperties: { frozenRowCount: 1 } },
+            fields: "gridProperties.frozenRowCount",
+        },
+    });
+    // Column widths: Month=120, count cols=70, % cols=70, $ cols=100
+    const colWidths = [
+        { col: 0, width: 120 }, // Month
+        { col: 1, width: 70 }, // Total Jobs
+        { col: 2, width: 100 }, // Total $
+        { col: 3, width: 70 }, // # Paid
+        { col: 4, width: 70 }, // % Paid
+        { col: 5, width: 70 }, // # Good to Pay
+        { col: 6, width: 70 }, // % Good to Pay
+        { col: 7, width: 70 }, // # On Hold
+        { col: 8, width: 70 }, // % On Hold
+        { col: 9, width: 70 }, // # Pending
+        { col: 10, width: 70 }, // % Pending
+        { col: 11, width: 70 }, // # Blank
+        { col: 12, width: 70 }, // % Blank
+    ];
+    for (const cw of colWidths) {
+        formatRequests.push({
+            updateDimensionProperties: {
+                range: { sheetId: dashboardSheetId, dimension: "COLUMNS", startIndex: cw.col, endIndex: cw.col + 1 },
+                properties: { pixelSize: cw.width },
+                fields: "pixelSize",
+            },
+        });
+    }
+    // Conditional formatting on % Paid column (col E, index 4): red <50%, yellow 50-79%, green ≥80%
+    // Clear existing conditional format rules first
+    formatRequests.push({
+        deleteConditionalFormatRule: {
+            sheetId: dashboardSheetId,
+            index: 0,
+        },
+    });
+    // We'll add them after clearing — but clearing may fail if none exist, so use addConditionalFormatRule
+    // Remove the delete and just add (they'll stack, but that's fine for a cleared tab)
+    formatRequests.pop(); // remove the delete
+    formatRequests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
+                booleanRule: {
+                    condition: { type: "NUMBER_LESS", values: [{ userEnteredValue: "0.5" }] },
+                    format: { backgroundColor: { red: 234 / 255, green: 153 / 255, blue: 153 / 255 } },
+                },
+            },
+            index: 0,
+        },
+    });
+    formatRequests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
+                booleanRule: {
+                    condition: { type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.5" }, { userEnteredValue: "0.7999" }] },
+                    format: { backgroundColor: { red: 255 / 255, green: 229 / 255, blue: 153 / 255 } },
+                },
+            },
+            index: 1,
+        },
+    });
+    formatRequests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
+                booleanRule: {
+                    condition: { type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.8" }] },
+                    format: { backgroundColor: { red: 147 / 255, green: 196 / 255, blue: 125 / 255 } },
+                },
+            },
+            index: 2,
+        },
+    });
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: formatRequests },
+    });
+    const totalRows = sortedMonths.reduce((sum, s) => sum + s.total, 0);
+    console.log(`  Dashboard: ${sortedMonths.length} months, ${totalRows} total jobs`);
+    return totalRows;
+}

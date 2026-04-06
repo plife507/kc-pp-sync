@@ -77,3 +77,8 @@ export interface SyncLogEntry {
  * Creates the tab with headers if it doesn't exist.
  */
 export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void>;
+/**
+ * Refresh the Dashboard tab with payment completion stats across all month tabs.
+ * Reads all active month + recurring tabs, aggregates by month, writes summary.
+ */
+export declare function refreshDashboard(spreadsheetId: string): Promise<number>;
