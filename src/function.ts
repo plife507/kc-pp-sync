@@ -9,7 +9,7 @@ import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, extendTabCF } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF } from "./adapters/sheets.js";
 import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -794,6 +794,7 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
     if (req.body?.refreshDashboard === true && !req.body?.mode && !req.body?.tab) {
       console.log("Dashboard-only refresh requested");
       const dashCount = await refreshDashboard(config.sheets.spreadsheetId);
+      await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
       await logSyncResult(config.sheets.spreadsheetId, {
@@ -846,6 +847,14 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
         console.log(`  Dashboard: ${dashboardCount} total jobs`);
       } catch (e) {
         console.warn(`  Dashboard refresh failed: ${e}`);
+      }
+
+      console.log("Refreshing Profitability section...");
+      try {
+        await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
+        console.log("  Profitability: done");
+      } catch (e) {
+        console.warn(`  Profitability refresh failed: ${e}`);
       }
     }
 

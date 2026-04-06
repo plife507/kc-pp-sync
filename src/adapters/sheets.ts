@@ -953,6 +953,358 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
 }
 
 /**
+ * Refresh the profitability section of the Dashboard tab.
+ * Reads one-off + recurring tabs for each month (Feb→Dec), aggregates revenue/labor,
+ * and writes a summary starting at row 18 of the Dashboard tab.
+ */
+export async function refreshProfitabilityDashboard(spreadsheetId: string): Promise<void> {
+  const sheets = await getSheetsClient();
+
+  // 1. Get all sheet names + Dashboard sheetId
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties",
+  });
+  const allTabs = (meta.data.sheets ?? [])
+    .map((s: any) => s.properties?.title as string)
+    .filter(Boolean);
+
+  const dashSheet = meta.data.sheets?.find((s: any) => s.properties?.title === DASHBOARD_TAB);
+  if (!dashSheet) return;
+  const dashboardSheetId = dashSheet.properties!.sheetId!;
+
+  // 2. Month definitions: display name, one-off tab, recurring tab, layout type
+  const MONTHS_TO_SCAN: Array<{ display: string; oneOffTab: string; recurringTab: string; type: "legacy" | "new" }> = [
+    { display: "February", oneOffTab: "February 2026", recurringTab: "Feb - R", type: "legacy" },
+    { display: "March", oneOffTab: "March", recurringTab: "March - R", type: "new" },
+    { display: "April", oneOffTab: "April", recurringTab: "April - R", type: "new" },
+    { display: "May", oneOffTab: "May", recurringTab: "May - R", type: "new" },
+    { display: "June", oneOffTab: "June", recurringTab: "June - R", type: "new" },
+    { display: "July", oneOffTab: "July", recurringTab: "July - R", type: "new" },
+    { display: "August", oneOffTab: "August", recurringTab: "August - R", type: "new" },
+    { display: "September", oneOffTab: "September", recurringTab: "September - R", type: "new" },
+    { display: "October", oneOffTab: "October", recurringTab: "October - R", type: "new" },
+    { display: "November", oneOffTab: "November", recurringTab: "November - R", type: "new" },
+    { display: "December", oneOffTab: "December", recurringTab: "December - R", type: "new" },
+  ];
+
+  // 3. Aggregate data per month
+  const monthData: Array<{
+    month: string;
+    oneOffRevenue: number;
+    recurringRevenue: number;
+    totalLabor: number;
+    uninvoicedLabor: number;
+    jobCount: number;
+    recurringRowCount: number;
+  }> = [];
+
+  for (const m of MONTHS_TO_SCAN) {
+    const hasOneOff = allTabs.includes(m.oneOffTab);
+    const hasRecurring = allTabs.includes(m.recurringTab);
+    if (!hasOneOff && !hasRecurring) continue;
+
+    let oneOffRevenue = 0;
+    let oneOffLabor = 0;
+    let jobCount = 0;
+    let recurringRevenue = 0;
+    let recurringLabor = 0;
+    let uninvoicedLabor = 0;
+    let recurringRowCount = 0;
+
+    // --- One-off tab ---
+    if (hasOneOff) {
+      try {
+        const range = m.type === "legacy"
+          ? `'${m.oneOffTab}'!A2:U500`
+          : `'${m.oneOffTab}'!A2:S500`;
+        const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+        const rows = (res.data.values ?? []) as string[][];
+
+        if (m.type === "legacy") {
+          // Dedup revenue by col L (Invoice Number), labor from col R, status col U
+          const seenInvoices = new Set<string>();
+          const uniqueJobs = new Set<string>();
+          for (const row of rows) {
+            const jobNum = (row[5] ?? "").toString().trim();
+            if (!jobNum) continue;
+            const paymentStatus = (row[20] ?? "").toString().trim();
+            if (paymentStatus.toLowerCase().startsWith("no payment")) continue;
+
+            uniqueJobs.add(jobNum);
+            oneOffLabor += parseDollarAmount((row[17] ?? "").toString());
+
+            const invoiceNum = (row[11] ?? "").toString().trim();
+            if (invoiceNum && invoiceNum !== "-" && !seenInvoices.has(invoiceNum)) {
+              seenInvoices.add(invoiceNum);
+              oneOffRevenue += parseDollarAmount((row[12] ?? "").toString());
+            }
+          }
+          jobCount = uniqueJobs.size;
+        } else {
+          // New layout: dedup revenue by col F (Job #), labor from col P, status col S
+          const seenJobs = new Set<string>();
+          for (const row of rows) {
+            const jobNum = (row[5] ?? "").toString().trim();
+            if (!jobNum) continue;
+            const paymentStatus = (row[18] ?? "").toString().trim();
+            if (paymentStatus.toLowerCase().startsWith("no payment")) continue;
+
+            oneOffLabor += parseDollarAmount((row[15] ?? "").toString());
+
+            if (!seenJobs.has(jobNum)) {
+              seenJobs.add(jobNum);
+              oneOffRevenue += parseDollarAmount((row[12] ?? "").toString());
+            }
+          }
+          jobCount = seenJobs.size;
+        }
+      } catch (e: any) {
+        if (!e?.message?.includes("Unable to parse range")) throw e;
+      }
+    }
+
+    // --- Recurring tab ---
+    if (hasRecurring) {
+      try {
+        const res = await sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `'${m.recurringTab}'!A2:U500`,
+        });
+        const rows = (res.data.values ?? []) as string[][];
+        const seenInvoices = new Set<string>();
+
+        for (const row of rows) {
+          const jobNum = (row[5] ?? "").toString().trim();
+          if (!jobNum) continue;
+
+          recurringRowCount++;
+          const labor = parseDollarAmount((row[17] ?? "").toString());
+          recurringLabor += labor;
+
+          const invoiceNum = (row[11] ?? "").toString().trim();
+          if (invoiceNum && invoiceNum !== "-") {
+            if (!seenInvoices.has(invoiceNum)) {
+              seenInvoices.add(invoiceNum);
+              recurringRevenue += parseDollarAmount((row[12] ?? "").toString());
+            }
+          } else {
+            uninvoicedLabor += labor;
+          }
+        }
+      } catch (e: any) {
+        if (!e?.message?.includes("Unable to parse range")) throw e;
+      }
+    }
+
+    monthData.push({
+      month: m.display,
+      oneOffRevenue,
+      recurringRevenue,
+      totalLabor: oneOffLabor + recurringLabor,
+      uninvoicedLabor,
+      jobCount,
+      recurringRowCount,
+    });
+  }
+
+  if (monthData.length === 0) return;
+
+  // 4. Build rows
+  const columnHeaders = [
+    "Month", "One-off Revenue", "Recurring Revenue", "Total Revenue",
+    "Total Labor", "Gross Profit", "Margin %", "Uninvoiced Labor",
+    "# Jobs", "# Recurring Rows",
+  ];
+
+  const dataRows: (string | number)[][] = [];
+  const ytd = { oneOffRev: 0, recurRev: 0, totalLabor: 0, uninvoiced: 0, jobs: 0, recurRows: 0 };
+
+  for (const m of monthData) {
+    const totalRev = m.oneOffRevenue + m.recurringRevenue;
+    const grossProfit = totalRev - m.totalLabor;
+    const margin = totalRev > 0 ? grossProfit / totalRev : 0;
+
+    dataRows.push([
+      m.month, m.oneOffRevenue, m.recurringRevenue, totalRev,
+      m.totalLabor, grossProfit, margin, m.uninvoicedLabor,
+      m.jobCount, m.recurringRowCount,
+    ]);
+
+    ytd.oneOffRev += m.oneOffRevenue;
+    ytd.recurRev += m.recurringRevenue;
+    ytd.totalLabor += m.totalLabor;
+    ytd.uninvoiced += m.uninvoicedLabor;
+    ytd.jobs += m.jobCount;
+    ytd.recurRows += m.recurringRowCount;
+  }
+
+  const ytdTotalRev = ytd.oneOffRev + ytd.recurRev;
+  const ytdGrossProfit = ytdTotalRev - ytd.totalLabor;
+  const ytdMargin = ytdTotalRev > 0 ? ytdGrossProfit / ytdTotalRev : 0;
+  const ytdRow: (string | number)[] = [
+    "YTD", ytd.oneOffRev, ytd.recurRev, ytdTotalRev,
+    ytd.totalLabor, ytdGrossProfit, ytdMargin, ytd.uninvoiced,
+    ytd.jobs, ytd.recurRows,
+  ];
+
+  // 5. Clear old profitability section (rows 18+)
+  try {
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `'${DASHBOARD_TAB}'!A18:J100`,
+    });
+  } catch { /* may be empty */ }
+
+  // 6. Write section header (row 18)
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${DASHBOARD_TAB}'!A18`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["📊 Revenue & Profitability"]] },
+  });
+
+  // 7. Write column headers (row 19), data rows (20+), YTD row
+  const allRows: (string | number)[][] = [columnHeaders, ...dataRows, ytdRow];
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${DASHBOARD_TAB}'!A19:J${19 + allRows.length - 1}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: allRows },
+  });
+
+  // 8. Formatting
+  const ytdRowIndex0 = 19 + dataRows.length; // 0-based index of YTD row
+  const formatRequests: any[] = [];
+
+  // Merge header row 18 (0-based: 17) across A–J
+  formatRequests.push({
+    mergeCells: {
+      range: { sheetId: dashboardSheetId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 0, endColumnIndex: 10 },
+      mergeType: "MERGE_ALL",
+    },
+  });
+
+  // Header row 18: blue bg, white text, bold
+  formatRequests.push({
+    repeatCell: {
+      range: { sheetId: dashboardSheetId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 0, endColumnIndex: 10 },
+      cell: {
+        userEnteredFormat: {
+          backgroundColor: { red: 26 / 255, green: 115 / 255, blue: 232 / 255 },
+          textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+        },
+      },
+      fields: "userEnteredFormat(backgroundColor,textFormat)",
+    },
+  });
+
+  // Column header row 19 (0-based: 18): bold
+  formatRequests.push({
+    repeatCell: {
+      range: { sheetId: dashboardSheetId, startRowIndex: 18, endRowIndex: 19, startColumnIndex: 0, endColumnIndex: 10 },
+      cell: { userEnteredFormat: { textFormat: { bold: true } } },
+      fields: "userEnteredFormat.textFormat",
+    },
+  });
+
+  // YTD row: light green bg (197,224,180), bold
+  formatRequests.push({
+    repeatCell: {
+      range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 0, endColumnIndex: 10 },
+      cell: {
+        userEnteredFormat: {
+          backgroundColor: { red: 197 / 255, green: 224 / 255, blue: 180 / 255 },
+          textFormat: { bold: true },
+        },
+      },
+      fields: "userEnteredFormat(backgroundColor,textFormat)",
+    },
+  });
+
+  // Currency format on cols B(1), C(2), D(3), E(4), F(5), H(7)
+  for (const col of [1, 2, 3, 4, 5, 7]) {
+    formatRequests.push({
+      repeatCell: {
+        range: { sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: col, endColumnIndex: col + 1 },
+        cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
+        fields: "userEnteredFormat.numberFormat",
+      },
+    });
+  }
+
+  // Percentage format on col G (index 6)
+  formatRequests.push({
+    repeatCell: {
+      range: { sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 6, endColumnIndex: 7 },
+      cell: { userEnteredFormat: { numberFormat: { type: "PERCENT", pattern: "0.0%" } } },
+      fields: "userEnteredFormat.numberFormat",
+    },
+  });
+
+  // Conditional formatting on col G: >=65% green, 40-65% yellow, <40% red
+  const cfRange = [{ sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 6, endColumnIndex: 7 }];
+  formatRequests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: cfRange,
+        booleanRule: {
+          condition: { type: "NUMBER_LESS", values: [{ userEnteredValue: "0.4" }] },
+          format: { backgroundColor: { red: 255 / 255, green: 199 / 255, blue: 206 / 255 } },
+        },
+      },
+    },
+  });
+  formatRequests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: cfRange,
+        booleanRule: {
+          condition: { type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.4" }, { userEnteredValue: "0.6499" }] },
+          format: { backgroundColor: { red: 255 / 255, green: 235 / 255, blue: 156 / 255 } },
+        },
+      },
+    },
+  });
+  formatRequests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: cfRange,
+        booleanRule: {
+          condition: { type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.65" }] },
+          format: { backgroundColor: { red: 198 / 255, green: 239 / 255, blue: 206 / 255 } },
+        },
+      },
+    },
+  });
+
+  // Column widths: A=120, B-J=140
+  formatRequests.push({
+    updateDimensionProperties: {
+      range: { sheetId: dashboardSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
+      properties: { pixelSize: 120 },
+      fields: "pixelSize",
+    },
+  });
+  for (let col = 1; col <= 9; col++) {
+    formatRequests.push({
+      updateDimensionProperties: {
+        range: { sheetId: dashboardSheetId, dimension: "COLUMNS", startIndex: col, endIndex: col + 1 },
+        properties: { pixelSize: 140 },
+        fields: "pixelSize",
+      },
+    });
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests: formatRequests },
+  });
+
+  console.log(`  Profitability: ${monthData.length} months written to Dashboard`);
+}
+
+/**
  * Extend all conditional format rules on a tab so they cover up to maxRow rows.
  * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
  */

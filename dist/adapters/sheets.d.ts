@@ -83,6 +83,12 @@ export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry
  */
 export declare function refreshDashboard(spreadsheetId: string): Promise<number>;
 /**
+ * Refresh the profitability section of the Dashboard tab.
+ * Reads one-off + recurring tabs for each month (Feb→Dec), aggregates revenue/labor,
+ * and writes a summary starting at row 18 of the Dashboard tab.
+ */
+export declare function refreshProfitabilityDashboard(spreadsheetId: string): Promise<void>;
+/**
  * Extend all conditional format rules on a tab so they cover up to maxRow rows.
  * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
  */
