@@ -1,99 +1,158 @@
-# KC PP Sync
+# kc-pp-sync
 
-Matches Jobber paid invoices to HeyPros jobs by WO# (`purchaseOrder`), detects missing `PAID BY CLIENT` labels, and writes audit results to a Google Sheet.
+Automated sync service for KC Power Clean. Pulls job and invoice data from Jobber and HeyPros, writes structured records to Google Sheets, and maintains a real-time payment dashboard.
 
-By default, fetches real paid invoices from the Jobber GraphQL API. Use `--mock-jobber` to fall back to fixture data.
+## What it does
 
-## Setup
+- Fetches all jobs for the current and previous month from Jobber + HeyPros
+- Matches HeyPros work orders to Jobber jobs by WO# (`purchaseOrder`)
+- Writes one row per HeyPros WO to the appropriate month tab in the KC PP Sync spreadsheet
+- Auto-populates: job status, client name, division, invoice data, sub invoice amount, payment status, auto notes
+- Maintains a **Dashboard** tab with payment status aggregates (Feb–present)
+- Maintains **GTP $** tabs (Good to Pay output per month)
+- Logs every sync result to the **Command** tab (timestamp, tab, status, job count, row count, elapsed)
+- Refreshes Jobber OAuth tokens automatically via Secret Manager
+
+## Sheet architecture
+
+| Tab type | Example | Layout | Notes |
+|---|---|---|---|
+| One-off | `March`, `April` | 39 cols (A–AM) | 5-slot invoice tracker (Y–AM) |
+| Recurring | `March - R`, `April - R` | 26 cols (A–Z) | Manual cols: A (Date), L (Invoice #) |
+| GTP $ | `March - GTP $` | 9 cols | Merged one-off + recurring, filtered to unpaid GTP rows |
+| Dashboard | `Dashboard` | 15 cols | Payment status by month, YTD totals |
+| Command | `Command` | 8 cols | Sync result log |
+| Legacy one-off | `February 2026` | 26 cols | Same structure as recurring layout |
+
+## Deployment
+
+Runs as a **Google Cloud Run** service (`kc-pp-sync`, project `aya-gservicies`, region `us-central1`).
+
+Four **Cloud Scheduler** jobs trigger hourly syncs:
+
+| Job | Schedule | Mode | Tab |
+|---|---|---|---|
+| `kc-pp-sync-hourly` | every hour :00 | `current` | Current month one-off |
+| `kc-pp-sync-recurring` | every hour :05 | `current-r` | Current month recurring |
+| `kc-pp-sync-prev-month` | every 4h :10 | `prev` | Previous month one-off |
+| `kc-pp-sync-prev-recurring` | every 4h :15 | `prev-r` | Previous month recurring |
+
+## Manual sync
+
+### Apps Script sidebar (in-sheet)
+Open the KC PP Sync spreadsheet → **KC Sync** menu → pick a sync target.
+
+### Direct API call
+```bash
+TOKEN=$(gcloud auth print-identity-token)
+curl -X POST https://kc-pp-sync-823212137840.us-central1.run.app \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"current"}'
+```
+
+**Mode values:** `current`, `current-r`, `prev`, `prev-r`
+
+To sync a specific tab by name:
+```bash
+-d '{"tab":"February 2026"}'
+```
+
+## Sync modes
+
+| Mode | Resolves to | Tab type |
+|---|---|---|
+| `current` | Current calendar month | One-off |
+| `current-r` | Current month + ` - R` | Recurring |
+| `prev` | Previous calendar month | One-off |
+| `prev-r` | Previous month + ` - R` | Recurring |
+
+Month names auto-derive from the current date — no manual updates needed on rollover.
+
+## Tab detection logic
+
+| Tab name pattern | Layout used |
+|---|---|
+| `February 2026` | Legacy one-off (26-col) |
+| `March`, `April`, … | New one-off (39-col) |
+| Ends with ` - R` | Recurring (26-col) |
+| Ends with ` - GTP $` | Output only — not synced directly |
+| `Dashboard`, `Command` | System tabs — not synced |
+
+## Recurring tab rules
+
+- Manual input: **Job #** (col F) and **Invoice #** (col L) only
+- All other fields auto-populated from Jobber + HeyPros
+- WOs assigned round-robin per job number, sorted by `installationStarts` ascending
+- Invoice # three-state logic:
+  - **Blank** → auto-populate from Jobber
+  - **`-`** → skip invoice sync (manual control mode, multi-invoice job)
+  - **Invoice #** → look up that specific invoice, fill payment columns
+
+## Multi-invoice jobs
+
+Jobs with multiple Jobber invoices (e.g. multi-contractor or phased work) use the tracker block in cols Y–AM (one-off tabs only): up to 5 invoice slots, each with Invoice #, Amount, and Paid status. Column L holds the primary invoice; column M holds total invoiced across all invoices.
+
+## Auto Notes
+
+Auto-populated in col X (one-off) / col Z (legacy/recurring). Flags:
+- No HeyPros WO found
+- Invoice missing or unpaid
+- Client paid but sub not released
+- Payment method or tracking missing
+- Multi-WO job
+- Recurring job with no invoice
+
+## Local development
 
 ```bash
 cd projects/kc-pp-sync
 npm install
+npm run build
+npm test          # 43 tests
 ```
 
-Copy `.env.example` to `.env` and fill in credentials (or rely on env vars already set).
-
-Jobber auth is self-contained: the adapter automatically refreshes the OAuth token when it expires or is within 5 minutes of expiring. Set `JOBBER_CLIENT_ID` and `JOBBER_CLIENT_SECRET` (or have them in `kc/.env`) to enable auto-refresh.
-
-## Run
-
+Deploy to Cloud Run:
 ```bash
-# Real Jobber + real HeyPros, dry-run sheet output
-npm start -- --dry-run
-
-# Real Jobber + real HeyPros + real Google Sheet write
-npm start
-
-# Mock both sides (no live API calls, no sheet writes)
-npm start -- --mock-heypros --mock-jobber --dry-run
-
-# Mock Jobber only with a custom fixture
-npm start -- --mock-jobber --fixture=my-scenario --dry-run
-```
-
-### CLI flags
-
-| Flag | Effect |
-|---|---|
-| `--dry-run` | Skip Google Sheets write; print results to console |
-| `--mock-heypros` | Use built-in mock HeyPros data instead of live API |
-| `--mock-jobber` | Use fixture data instead of live Jobber API |
-| `--fixture=NAME` | Load `fixtures/NAME.json` instead of `fixtures/default.json` (requires `--mock-jobber`) |
-
-## Tests
-
-```bash
-npm test
+gcloud run deploy kc-pp-sync \
+  --source . \
+  --region us-central1 \
+  --project aya-gservicies \
+  --no-allow-unauthenticated
 ```
 
 ## Architecture
 
 ```
 src/
-  config/env.ts        — env var loading (HeyPros, Jobber, Sheets)
-  config/types.ts      — shared types, Jobber GraphQL types, constants
-  adapters/heypros.ts  — HeyPros GraphQL auth + paginated job fetch
-  adapters/jobber.ts   — real Jobber GraphQL paid invoice fetch
-  adapters/jobber-mock.ts — loads Jobber fixtures from JSON
-  adapters/sheets.ts   — Google Sheets write via gog CLI
-  core/matcher.ts      — matches Jobber paid jobs to HeyPros by WO#
-  index.ts             — CLI entrypoint
-fixtures/
-  default.json         — default Jobber paid-job fixture
+  config/
+    env.ts              — env var loading + Secret Manager integration
+    types.ts            — shared types and constants
+  adapters/
+    heypros.ts          — HeyPros GraphQL auth, token caching, paginated fetch
+    jobber.ts           — Jobber GraphQL + OAuth auto-refresh via Secret Manager
+    sheets.ts           — all Google Sheets read/write logic
+      refreshDashboard()           — payment status aggregation
+      refreshProfitabilityDashboard() — revenue & margin section (paused)
+  core/
+    matcher.ts          — WO↔job matching logic
+  function.ts           — Cloud Run HTTP handler, mode routing, sync orchestration
 test/
-  matcher.test.ts      — matcher edge case tests
+  matcher.test.ts       — matcher edge case tests
+  sheets.test.ts        — sheet write/format tests
+  function.test.ts      — handler integration tests
 ```
 
-## Env vars
+## Secrets
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `HEYPROS_GRAPHQL_URL` | Yes | — | HeyPros GraphQL endpoint |
-| `HEYPROS_TENANT` | Yes | — | Tenant header value |
-| `HEYPROS_EMAIL` | Yes | — | Login email |
-| `HEYPROS_PASSWORD` | Yes | — | Login password |
-| `JOBBER_TOKEN_PATH` | No | `/data/.openclaw/workspace-aya-dev/kc/tokens/jobber_tokens.json` | Path to Jobber OAuth token JSON |
-| `JOBBER_API_URL` | No | `https://api.getjobber.com/api/graphql` | Jobber GraphQL endpoint |
-| `JOBBER_API_VERSION` | No | `2025-04-16` | X-JOBBER-GRAPHQL-VERSION header |
-| `JOBBER_CLIENT_ID` | No* | — | Jobber OAuth client ID (required for auto-refresh) |
-| `JOBBER_CLIENT_SECRET` | No* | — | Jobber OAuth client secret (required for auto-refresh) |
-| `SYNC_LOOKBACK_DAYS` | No | `7` | Default lookback window for incremental sync |
-| `GOOGLE_SHEETS_DEFAULT_ID` | No | — | Existing sheet ID (creates new if empty) |
-| `SHEETS_DRY_RUN` | No | — | Set `true` to skip sheet writes |
+Stored in Google Secret Manager (`aya-gservicies`):
 
-## Jobber integration
+| Secret | Description |
+|---|---|
+| `jobber-tokens` | Jobber OAuth token JSON (auto-rotated on refresh) |
+| `heypros-credentials` | HeyPros email + password |
+| `spreadsheet-id` | KC PP Sync sheet ID |
 
-The adapter manages its own OAuth tokens. On each API call it checks the access token's expiry (preferring the JWT `exp` claim, falling back to `expires_at` in the token file). If the token expires within 5 minutes, it refreshes automatically via `POST https://api.getjobber.com/api/oauth/token`.
+## Spreadsheet
 
-Refreshed tokens are persisted back to the token file at `JOBBER_TOKEN_PATH` and the `JOBBER_ACCESS_TOKEN` value in `kc/.env` is updated. If the refresh token itself is expired, a clear error is thrown with a re-authorization URL.
-
-If a Jobber API call returns an auth error (HTTP 401/403 or GraphQL auth-like errors), the adapter refreshes the token once and retries the call once before failing.
-
-Queries paid invoices updated within the lookback window using cursor-based pagination. Each invoice is normalized to one record per job number (`jobs.nodes[].jobNumber`). Invoices with missing job numbers are skipped.
-
-Amount uses `amounts.paymentsTotal` when available, falling back to `amounts.total`. Paid date comes from `receivedDate`.
-
-## Constraints
-
-- **No HeyPros mutations** — read-only
-- Sheets write uses `gog` CLI (must be installed and authenticated)
+**KC PP Sync** — `1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q`
