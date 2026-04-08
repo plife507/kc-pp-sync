@@ -84,8 +84,40 @@ export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry
 export declare function refreshDashboard(spreadsheetId: string): Promise<number>;
 /**
  * Refresh the profitability section of the Dashboard tab.
- * Reads one-off + recurring tabs for each month (Feb→Dec), aggregates revenue/labor,
- * and writes a summary starting at row 18 of the Dashboard tab.
+ *
+ * METHODOLOGY (also written to the sheet as a notes row):
+ *   Revenue is counted ONLY when All Paid? = "✅" (Jobber confirmed client invoice paid).
+ *   Unpaid / On Hold / NO CLIENT PAY jobs are excluded from revenue but labor is always counted.
+ *
+ *   Jobs are split into three categories by Division column (K):
+ *     One-off   = Division is "Subcontractor - Dayshift" (or blank/other on main tabs)
+ *     Hybrid    = Division is "Hybrid" (KC in-house labor + one or more PPs on same job)
+ *     Recurring = jobs on the {Month} - R tabs (recurring visit schedule)
+ *
+ *   Row inclusion gate (both revenue AND labor):
+ *     New layout (March+): row must have # of Invoices (col L) > 0 — skips uninvoiced jobs
+ *     Legacy layout (Jan/Feb): row must have a real Invoice # in col L (not blank, not "-")
+ *     Recurring tabs: row must have a real Invoice # in col L (not blank, not "-")
+ *     Rationale: Division is not finalised until a job is invoiced. Uninvoiced rows
+ *     may show a Division value that hasn't been confirmed yet — skip entirely.
+ *
+ *   Revenue dedup (prevents double-counting multi-contractor jobs):
+ *     New layout (March+): dedup by Job # — revenue counted once per unique Job #
+ *     Legacy layout (Jan/Feb): dedup by Invoice # — revenue counted once per unique invoice
+ *     Recurring tabs: dedup by Invoice # (col L)
+ *
+ *   Labor = Sub Invoice Amount (col P new / col R legacy / col R recurring).
+ *   Only counted when the row passes the invoice gate above.
+ *
+ *   Recurring margin note: one Jobber invoice often covers multiple visits (rows).
+ *   Use "# Recurring Invoices" + "# Recurring Visits" to understand visits-per-invoice
+ *   before drawing margin conclusions on recurring jobs.
+ *
+ *   Margin % = (Total Revenue - Total Labor) / Total Revenue.
+ *   NOTE: Hybrid margin is understated — KC's own cost of labor is not yet tracked.
+ *   A future Hybrid tab will add that field; for now treat Hybrid margin as a ceiling.
+ *
+ * Written to Dashboard starting at row 18.
  */
 export declare function refreshProfitabilityDashboard(spreadsheetId: string): Promise<void>;
 /**

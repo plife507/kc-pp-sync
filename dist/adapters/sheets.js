@@ -586,17 +586,7 @@ export async function refreshDashboard(spreadsheetId) {
         ytdNoClient, pct(ytdNoClient, ytdTotal),
         ytdBlank, pct(ytdBlank, ytdTotal),
     ]);
-    // Section 2: No Payment notes (row 16+)
-    const noPayHeader = ["Excluded — No Payment (jobs that will never be paid)"];
-    const noPaySubHeader = ["Month", "# Jobs Excluded"];
-    const noPayRows = [];
-    let ytdNoPayCount = 0;
-    for (const s of sortedMonths) {
-        if (s.noPaymentCount === 0)
-            continue;
-        noPayRows.push([s.month, s.noPaymentCount]);
-        ytdNoPayCount += s.noPaymentCount;
-    }
+    // (No Payment section removed — covered by # Excl. columns in profitability table)
     // 5. Ensure Dashboard tab exists
     const dashboardExists = allTabs.includes(DASHBOARD_TAB);
     let dashboardSheetId;
@@ -614,15 +604,37 @@ export async function refreshDashboard(spreadsheetId) {
         const sheet = meta.data.sheets?.find((s) => s.properties?.title === DASHBOARD_TAB);
         dashboardSheetId = sheet?.properties?.sheetId ?? 0;
     }
-    // 6. Clear Dashboard tab
+    // 6. Clear Dashboard tab (full width A:S to cover both old and new layouts)
     try {
         await sheets.spreadsheets.values.clear({
             spreadsheetId,
-            range: `'${DASHBOARD_TAB}'!A1:O100`,
+            range: `'${DASHBOARD_TAB}'!A1:S200`,
         });
     }
     catch {
         // tab may be empty
+    }
+    // 6b. Nuke ALL existing conditional format rules on Dashboard to prevent accumulation.
+    // addConditionalFormatRule appends — without this, every sync adds 6 more rules (1,000+ after days).
+    // We delete rules one-by-one from index 0 until none remain, then write fresh rules below.
+    {
+        const cfMeta = await sheets.spreadsheets.get({
+            spreadsheetId,
+            fields: "sheets(properties.sheetId,conditionalFormats)",
+        });
+        const dashSheet = cfMeta.data.sheets?.find((s) => s.properties?.sheetId === dashboardSheetId);
+        const existingRules = dashSheet?.conditionalFormats ?? [];
+        if (existingRules.length > 0) {
+            console.log(`  Dashboard CF nuke: removing ${existingRules.length} stale rules...`);
+            // Delete all rules by repeatedly deleting index 0 (list shifts after each delete)
+            const deleteRequests = existingRules.map(() => ({
+                deleteConditionalFormatRule: { sheetId: dashboardSheetId, index: 0 },
+            }));
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId,
+                requestBody: { requests: deleteRequests },
+            });
+        }
     }
     // 7. Write main table (rows 1-14)
     await sheets.spreadsheets.values.update({
@@ -631,29 +643,8 @@ export async function refreshDashboard(spreadsheetId) {
         valueInputOption: "USER_ENTERED",
         requestBody: { values: mainRows },
     });
-    // 8. Write No Payment section (row 16+)
-    const noPayStartRow = mainRows.length + 2; // blank row after main table
-    const allNoPayRows = [
-        noPayHeader,
-        noPaySubHeader,
-        ...noPayRows,
-    ];
-    if (ytdNoPayCount > 0) {
-        allNoPayRows.push(["YTD", ytdNoPayCount]);
-    }
-    if (allNoPayRows.length > 2) { // only write if there's data beyond headers
-        await sheets.spreadsheets.values.update({
-            spreadsheetId,
-            range: `'${DASHBOARD_TAB}'!A${noPayStartRow}:O${noPayStartRow + allNoPayRows.length - 1}`,
-            valueInputOption: "USER_ENTERED",
-            requestBody: { values: allNoPayRows },
-        });
-    }
     // 9. Apply formatting via batchUpdate
     const ytdRowIndex = mainRows.length - 1; // 0-based index of YTD row
-    const noPayHeaderRowIndex = noPayStartRow - 1; // 0-based
-    const noPaySubHeaderRowIndex = noPayStartRow; // 0-based
-    const noPayYtdRowIndex = noPayStartRow + allNoPayRows.length - 2; // 0-based
     const formatRequests = [];
     // Header row (row 1): bold, blue bg, white text
     formatRequests.push({
@@ -700,44 +691,6 @@ export async function refreshDashboard(spreadsheetId) {
             fields: "userEnteredFormat.numberFormat",
         },
     });
-    // No Payment section header: bold, orange bg
-    if (allNoPayRows.length > 2) {
-        formatRequests.push({
-            repeatCell: {
-                range: { sheetId: dashboardSheetId, startRowIndex: noPayHeaderRowIndex, endRowIndex: noPayHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 15 },
-                cell: {
-                    userEnteredFormat: {
-                        backgroundColor: { red: 255 / 255, green: 229 / 255, blue: 178 / 255 },
-                        textFormat: { bold: true },
-                    },
-                },
-                fields: "userEnteredFormat(backgroundColor,textFormat)",
-            },
-        });
-        // No Payment sub-header: bold
-        formatRequests.push({
-            repeatCell: {
-                range: { sheetId: dashboardSheetId, startRowIndex: noPaySubHeaderRowIndex, endRowIndex: noPaySubHeaderRowIndex + 1, startColumnIndex: 0, endColumnIndex: 2 },
-                cell: { userEnteredFormat: { textFormat: { bold: true } } },
-                fields: "userEnteredFormat.textFormat",
-            },
-        });
-        // No Payment YTD row: bold
-        if (ytdNoPayCount > 0) {
-            formatRequests.push({
-                repeatCell: {
-                    range: { sheetId: dashboardSheetId, startRowIndex: noPayYtdRowIndex, endRowIndex: noPayYtdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 2 },
-                    cell: {
-                        userEnteredFormat: {
-                            backgroundColor: { red: 207 / 255, green: 226 / 255, blue: 255 / 255 },
-                            textFormat: { bold: true },
-                        },
-                    },
-                    fields: "userEnteredFormat(backgroundColor,textFormat)",
-                },
-            });
-        }
-    }
     // Frozen header row
     formatRequests.push({
         updateSheetProperties: {
@@ -773,16 +726,7 @@ export async function refreshDashboard(spreadsheetId) {
         });
     }
     // Conditional formatting on % Paid column (col E, index 4): red <50%, yellow 50-79%, green ≥80%
-    // Clear existing conditional format rules first
-    formatRequests.push({
-        deleteConditionalFormatRule: {
-            sheetId: dashboardSheetId,
-            index: 0,
-        },
-    });
-    // We'll add them after clearing — but clearing may fail if none exist, so use addConditionalFormatRule
-    // Remove the delete and just add (they'll stack, but that's fine for a cleared tab)
-    formatRequests.pop(); // remove the delete
+    // (All stale CF rules were already nuked above in step 6b — safe to just add fresh rules here.)
     formatRequests.push({
         addConditionalFormatRule: {
             rule: {
@@ -829,8 +773,40 @@ export async function refreshDashboard(spreadsheetId) {
 }
 /**
  * Refresh the profitability section of the Dashboard tab.
- * Reads one-off + recurring tabs for each month (Feb→Dec), aggregates revenue/labor,
- * and writes a summary starting at row 18 of the Dashboard tab.
+ *
+ * METHODOLOGY (also written to the sheet as a notes row):
+ *   Revenue is counted ONLY when All Paid? = "✅" (Jobber confirmed client invoice paid).
+ *   Unpaid / On Hold / NO CLIENT PAY jobs are excluded from revenue but labor is always counted.
+ *
+ *   Jobs are split into three categories by Division column (K):
+ *     One-off   = Division is "Subcontractor - Dayshift" (or blank/other on main tabs)
+ *     Hybrid    = Division is "Hybrid" (KC in-house labor + one or more PPs on same job)
+ *     Recurring = jobs on the {Month} - R tabs (recurring visit schedule)
+ *
+ *   Row inclusion gate (both revenue AND labor):
+ *     New layout (March+): row must have # of Invoices (col L) > 0 — skips uninvoiced jobs
+ *     Legacy layout (Jan/Feb): row must have a real Invoice # in col L (not blank, not "-")
+ *     Recurring tabs: row must have a real Invoice # in col L (not blank, not "-")
+ *     Rationale: Division is not finalised until a job is invoiced. Uninvoiced rows
+ *     may show a Division value that hasn't been confirmed yet — skip entirely.
+ *
+ *   Revenue dedup (prevents double-counting multi-contractor jobs):
+ *     New layout (March+): dedup by Job # — revenue counted once per unique Job #
+ *     Legacy layout (Jan/Feb): dedup by Invoice # — revenue counted once per unique invoice
+ *     Recurring tabs: dedup by Invoice # (col L)
+ *
+ *   Labor = Sub Invoice Amount (col P new / col R legacy / col R recurring).
+ *   Only counted when the row passes the invoice gate above.
+ *
+ *   Recurring margin note: one Jobber invoice often covers multiple visits (rows).
+ *   Use "# Recurring Invoices" + "# Recurring Visits" to understand visits-per-invoice
+ *   before drawing margin conclusions on recurring jobs.
+ *
+ *   Margin % = (Total Revenue - Total Labor) / Total Revenue.
+ *   NOTE: Hybrid margin is understated — KC's own cost of labor is not yet tracked.
+ *   A future Hybrid tab will add that field; for now treat Hybrid margin as a ceiling.
+ *
+ * Written to Dashboard starting at row 18.
  */
 export async function refreshProfitabilityDashboard(spreadsheetId) {
     const sheets = await getSheetsClient();
@@ -846,7 +822,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
     if (!dashSheet)
         return;
     const dashboardSheetId = dashSheet.properties.sheetId;
-    // 2. Month definitions: display name, one-off tab, recurring tab, layout type
+    // 2. Month definitions
     const MONTHS_TO_SCAN = [
         { display: "February", oneOffTab: "February 2026", recurringTab: "Feb - R", type: "legacy" },
         { display: "March", oneOffTab: "March", recurringTab: "March - R", type: "new" },
@@ -867,14 +843,17 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         const hasRecurring = allTabs.includes(m.recurringTab);
         if (!hasOneOff && !hasRecurring)
             continue;
-        let oneOffRevenue = 0;
-        let oneOffLabor = 0;
-        let jobCount = 0;
-        let recurringRevenue = 0;
-        let recurringLabor = 0;
-        let uninvoicedLabor = 0;
-        let recurringRowCount = 0;
-        // --- One-off tab ---
+        let oneOffRevenue = 0, hybridRevenue = 0, recurringRevenue = 0;
+        let oneOffLabor = 0, hybridLabor = 0, recurringLabor = 0;
+        let oneOffExcluded = 0, recurringExcluded = 0;
+        const seenOneOffJobs = new Set();
+        const seenHybridJobs = new Set();
+        let recurringVisits = 0;
+        const seenRecurringInvoices = new Set();
+        // --- One-off tab (contains both "one-off" and "hybrid" rows by Division) ---
+        // Invoice gate: row must be invoiced before division is trusted or labor counted.
+        //   Legacy: must have a real Invoice # in col L (not blank, not "-")
+        //   New:    must have # of Invoices (col L) > 0
         if (hasOneOff) {
             try {
                 const range = m.type === "legacy"
@@ -883,43 +862,100 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
                 const rows = (res.data.values ?? []);
                 if (m.type === "legacy") {
-                    // Dedup revenue by col L (Invoice Number), labor from col R, status col U
+                    // Legacy layout (Jan/Feb):
+                    //   F=Job#(5), K=Division(10), L=Invoice#(11), M=TotalInvoiced(12),
+                    //   O=InvoiceStatus(14), R=SubInvAmt(17), U=PaymentStatus(20)
+                    // Invoice gate: col L must be a real invoice number (not blank, not "-")
+                    // Revenue gate: InvoiceStatus(O) = "Paid"
+                    // Dedup revenue by Invoice #
                     const seenInvoices = new Set();
-                    const uniqueJobs = new Set();
                     for (const row of rows) {
                         const jobNum = (row[5] ?? "").toString().trim();
                         if (!jobNum)
                             continue;
-                        const paymentStatus = (row[20] ?? "").toString().trim();
-                        if (paymentStatus.toLowerCase().startsWith("no payment"))
-                            continue;
-                        uniqueJobs.add(jobNum);
-                        oneOffLabor += parseDollarAmount((row[17] ?? "").toString());
                         const invoiceNum = (row[11] ?? "").toString().trim();
-                        if (invoiceNum && invoiceNum !== "-" && !seenInvoices.has(invoiceNum)) {
+                        // Invoice gate: skip uninvoiced rows — division not yet finalised
+                        if (!invoiceNum || invoiceNum === "-")
+                            continue;
+                        const division = (row[10] ?? "").toString().trim();
+                        const invTotal = (row[12] ?? "").toString().trim();
+                        const invStatus = (row[14] ?? "").toString().trim();
+                        const labor = parseDollarAmount((row[17] ?? "").toString());
+                        const payStatus = (row[20] ?? "").toString().trim();
+                        // Skip "No payment" rows (sub never gets paid, not a real job)
+                        if (payStatus.toLowerCase().startsWith("no payment"))
+                            continue;
+                        const isHybrid = division === "Hybrid";
+                        // Labor: count for all invoiced rows
+                        if (isHybrid) {
+                            hybridLabor += labor;
+                            seenHybridJobs.add(jobNum);
+                        }
+                        else {
+                            oneOffLabor += labor;
+                            seenOneOffJobs.add(jobNum);
+                        }
+                        // Revenue: only when Jobber invoice is Paid, dedup by Invoice #
+                        if (invStatus.toLowerCase() === "paid" && !seenInvoices.has(invoiceNum)) {
                             seenInvoices.add(invoiceNum);
-                            oneOffRevenue += parseDollarAmount((row[12] ?? "").toString());
+                            const rev = parseDollarAmount(invTotal);
+                            if (isHybrid)
+                                hybridRevenue += rev;
+                            else
+                                oneOffRevenue += rev;
+                        }
+                        else if (invStatus.toLowerCase() !== "paid" && !isHybrid) {
+                            oneOffExcluded++;
                         }
                     }
-                    jobCount = uniqueJobs.size;
                 }
                 else {
-                    // New layout: dedup revenue by col F (Job #), labor from col P, status col S
-                    const seenJobs = new Set();
+                    // New layout (March+):
+                    //   F=Job#(5), K=Division(10), L=#Invoices(11), M=TotalInvoiced(12),
+                    //   N=AllPaid?(13), P=SubInvAmt(15), S=PaymentStatus(18)
+                    // Invoice gate: col L (# of Invoices) must be > 0 — skips jobs not yet invoiced
+                    // Revenue gate: All Paid?(N) = "✅"
+                    // Dedup revenue by Job #
+                    const seenJobsForRevenue = new Set();
                     for (const row of rows) {
                         const jobNum = (row[5] ?? "").toString().trim();
                         if (!jobNum)
                             continue;
-                        const paymentStatus = (row[18] ?? "").toString().trim();
-                        if (paymentStatus.toLowerCase().startsWith("no payment"))
+                        const numInvoices = parseInt((row[11] ?? "0").toString().trim(), 10) || 0;
+                        // Invoice gate: skip uninvoiced rows — division not yet finalised
+                        if (numInvoices === 0)
                             continue;
-                        oneOffLabor += parseDollarAmount((row[15] ?? "").toString());
-                        if (!seenJobs.has(jobNum)) {
-                            seenJobs.add(jobNum);
-                            oneOffRevenue += parseDollarAmount((row[12] ?? "").toString());
+                        const division = (row[10] ?? "").toString().trim();
+                        const invTotal = (row[12] ?? "").toString().trim();
+                        const allPaid = (row[13] ?? "").toString().trim();
+                        const labor = parseDollarAmount((row[15] ?? "").toString());
+                        const payStatus = (row[18] ?? "").toString().trim();
+                        // Skip "No payment" rows
+                        if (payStatus.toLowerCase().startsWith("no payment"))
+                            continue;
+                        const isHybrid = division === "Hybrid";
+                        // Labor: count for all invoiced rows
+                        if (isHybrid) {
+                            hybridLabor += labor;
+                            seenHybridJobs.add(jobNum);
+                        }
+                        else {
+                            oneOffLabor += labor;
+                            seenOneOffJobs.add(jobNum);
+                        }
+                        // Revenue: only when All Paid? = "✅", dedup by Job #
+                        if (allPaid === "✅" && !seenJobsForRevenue.has(jobNum)) {
+                            seenJobsForRevenue.add(jobNum);
+                            const rev = parseDollarAmount(invTotal);
+                            if (isHybrid)
+                                hybridRevenue += rev;
+                            else
+                                oneOffRevenue += rev;
+                        }
+                        else if (allPaid !== "✅" && !isHybrid) {
+                            oneOffExcluded++;
                         }
                     }
-                    jobCount = seenJobs.size;
                 }
             }
             catch (e) {
@@ -928,6 +964,12 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             }
         }
         // --- Recurring tab ---
+        // Layout: F=Job#(5), L=Invoice#(11), M=TotalInvoiced(12), O=InvoiceStatus(14), R=SubInvAmt(17)
+        // Invoice gate: col L must be a real invoice number (not blank, not "-")
+        // Revenue gate: InvoiceStatus(O) = "Paid"
+        // Dedup revenue by Invoice # (one billing cycle invoice covers multiple visits)
+        // Track both visit count and invoice count — one invoice spans multiple visits,
+        // so visits-per-invoice context is needed for margin analysis.
         if (hasRecurring) {
             try {
                 const res = await sheets.spreadsheets.values.get({
@@ -935,23 +977,44 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                     range: `'${m.recurringTab}'!A2:U500`,
                 });
                 const rows = (res.data.values ?? []);
-                const seenInvoices = new Set();
                 for (const row of rows) {
                     const jobNum = (row[5] ?? "").toString().trim();
                     if (!jobNum)
                         continue;
-                    recurringRowCount++;
-                    const labor = parseDollarAmount((row[17] ?? "").toString());
-                    recurringLabor += labor;
                     const invoiceNum = (row[11] ?? "").toString().trim();
-                    if (invoiceNum && invoiceNum !== "-") {
-                        if (!seenInvoices.has(invoiceNum)) {
-                            seenInvoices.add(invoiceNum);
-                            recurringRevenue += parseDollarAmount((row[12] ?? "").toString());
-                        }
+                    // Invoice gate: skip rows not yet invoiced
+                    if (!invoiceNum || invoiceNum === "-")
+                        continue;
+                    const invTotal = (row[12] ?? "").toString().trim();
+                    const invStatus = (row[14] ?? "").toString().trim();
+                    const labor = parseDollarAmount((row[17] ?? "").toString());
+                    recurringVisits++;
+                    recurringLabor += labor;
+                    seenRecurringInvoices.add(invoiceNum);
+                    if (invStatus.toLowerCase() === "paid" && !seenRecurringInvoices.has(invoiceNum)) {
+                        // Note: seenRecurringInvoices already added above; this check won't fire.
+                        // Revenue dedup handled by checking set before adding:
                     }
-                    else {
-                        uninvoicedLabor += labor;
+                }
+                // Redo revenue dedup cleanly in a second pass to keep logic readable
+                const seenPaidInvoices = new Set();
+                const seenUnpaidInvoices = new Set();
+                for (const row of rows) {
+                    const jobNum = (row[5] ?? "").toString().trim();
+                    if (!jobNum)
+                        continue;
+                    const invoiceNum = (row[11] ?? "").toString().trim();
+                    if (!invoiceNum || invoiceNum === "-")
+                        continue;
+                    const invTotal = (row[12] ?? "").toString().trim();
+                    const invStatus = (row[14] ?? "").toString().trim();
+                    if (invStatus.toLowerCase() === "paid" && !seenPaidInvoices.has(invoiceNum)) {
+                        seenPaidInvoices.add(invoiceNum);
+                        recurringRevenue += parseDollarAmount(invTotal);
+                    }
+                    else if (invStatus.toLowerCase() !== "paid" && !seenUnpaidInvoices.has(invoiceNum)) {
+                        seenUnpaidInvoices.add(invoiceNum);
+                        recurringExcluded++;
                     }
                 }
             }
@@ -962,106 +1025,229 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         }
         monthData.push({
             month: m.display,
-            oneOffRevenue,
-            recurringRevenue,
-            totalLabor: oneOffLabor + recurringLabor,
-            uninvoicedLabor,
-            jobCount,
-            recurringRowCount,
+            oneOffRevenue, oneOffLabor, oneOffJobs: seenOneOffJobs.size, oneOffExcluded,
+            recurringRevenue, recurringLabor, recurringVisits,
+            recurringInvoices: seenRecurringInvoices.size, recurringExcluded,
+            hybridRevenue, hybridLabor, hybridJobs: seenHybridJobs.size,
         });
     }
     if (monthData.length === 0)
         return;
-    // 4. Build rows
+    // 4. Build data rows
+    //
+    // Sequential grouping — each category shows revenue, labor, margin together:
+    //
+    //  A  Month
+    //  --- ONE-OFF (main tab, non-Hybrid) ---
+    //  B  One-off Revenue    (paid jobs only, deduped by Job#)
+    //  C  One-off Labor      (all invoiced rows)
+    //  D  One-off Margin %   (rev-labor)/rev
+    //  E  # One-off Jobs     (unique Job# count, invoiced)
+    //  F  # One-off Excluded (invoiced but not paid — excluded from revenue/margin)
+    //  --- RECURRING (- R tabs) ---
+    //  G  Recurring Revenue  (paid invoices only, deduped by Invoice#)
+    //  H  Recurring Labor    (all invoiced rows)
+    //  I  Recurring Margin % (rev-labor)/rev
+    //  J  # Recur. Visits    (total invoiced rows — each row = one visit)
+    //  K  # Recur. Invoices  (unique Invoice# — one invoice spans multiple visits)
+    //  L  # Recur. Excluded  (invoiced but not paid — excluded from revenue/margin)
+    //  --- HYBRID (main tab, Division = "Hybrid") ---
+    //  M  Hybrid Revenue     (paid jobs only)
+    //  N  Hybrid Labor       (all invoiced rows)
+    //  O  # Hybrid Jobs      (unique Job# count, invoiced)
+    //  --- TOTALS ---
+    //  P  Total Revenue      (one-off + recurring ONLY — hybrid excluded, different cost structure)
+    //  Q  Total Labor        (one-off + recurring ONLY)
+    //  R  Total Gross Profit
+    //  S  Total Margin %
+    //
+    // Notes:
+    //  - Recurring margin is per billing-cycle invoice (not per visit).
+    //    Divide J/K to get avg visits per invoice for per-visit context.
+    //  - Hybrid margin is not calculated (KC in-house labor not yet tracked).
+    //  - "Excluded" = invoiced rows omitted from revenue because client hasn't paid yet.
+    const NUM_COLS = 19;
     const columnHeaders = [
-        "Month", "One-off Revenue", "Recurring Revenue", "Total Revenue",
-        "Total Labor", "Gross Profit", "Margin %", "Uninvoiced Labor",
-        "# Jobs", "# Recurring Rows",
+        "Month",
+        // One-off
+        "One-off Revenue", "One-off Labor", "One-off Margin %",
+        "# One-off Jobs", "# Excl. (One-off)",
+        // Recurring
+        "Recurring Revenue", "Recurring Labor", "Recurring Margin %",
+        "# Recur. Visits", "# Recur. Invoices", "# Excl. (Recur.)",
+        // Hybrid
+        "Hybrid Revenue", "Hybrid Labor", "# Hybrid Jobs",
+        // Totals
+        "Total Revenue", "Total Labor", "Gross Profit", "Total Margin %",
     ];
     const dataRows = [];
-    const ytd = { oneOffRev: 0, recurRev: 0, totalLabor: 0, uninvoiced: 0, jobs: 0, recurRows: 0 };
+    const ytd = {
+        oneOffRev: 0, oneOffLab: 0, oneOffJobs: 0, oneOffExcl: 0,
+        recurRev: 0, recurLab: 0, recurVisits: 0, recurInvoices: 0, recurExcl: 0,
+        hybridRev: 0, hybridLab: 0, hybridJobs: 0,
+    };
     for (const m of monthData) {
+        const oneOffMargin = m.oneOffRevenue > 0 ? (m.oneOffRevenue - m.oneOffLabor) / m.oneOffRevenue : 0;
+        const recurMargin = m.recurringRevenue > 0 ? (m.recurringRevenue - m.recurringLabor) / m.recurringRevenue : 0;
+        // Totals = one-off + recurring ONLY. Hybrid excluded (different cost structure).
         const totalRev = m.oneOffRevenue + m.recurringRevenue;
-        const grossProfit = totalRev - m.totalLabor;
-        const margin = totalRev > 0 ? grossProfit / totalRev : 0;
+        const totalLabor = m.oneOffLabor + m.recurringLabor;
+        const grossProfit = totalRev - totalLabor;
+        const totalMargin = totalRev > 0 ? grossProfit / totalRev : 0;
         dataRows.push([
-            m.month, m.oneOffRevenue, m.recurringRevenue, totalRev,
-            m.totalLabor, grossProfit, margin, m.uninvoicedLabor,
-            m.jobCount, m.recurringRowCount,
+            m.month,
+            // One-off
+            m.oneOffRevenue, m.oneOffLabor, oneOffMargin,
+            m.oneOffJobs, m.oneOffExcluded,
+            // Recurring
+            m.recurringRevenue, m.recurringLabor, recurMargin,
+            m.recurringVisits, m.recurringInvoices, m.recurringExcluded,
+            // Hybrid
+            m.hybridRevenue, m.hybridLabor, m.hybridJobs,
+            // Totals
+            totalRev, totalLabor, grossProfit, totalMargin,
         ]);
         ytd.oneOffRev += m.oneOffRevenue;
+        ytd.oneOffLab += m.oneOffLabor;
+        ytd.oneOffJobs += m.oneOffJobs;
+        ytd.oneOffExcl += m.oneOffExcluded;
         ytd.recurRev += m.recurringRevenue;
-        ytd.totalLabor += m.totalLabor;
-        ytd.uninvoiced += m.uninvoicedLabor;
-        ytd.jobs += m.jobCount;
-        ytd.recurRows += m.recurringRowCount;
+        ytd.recurLab += m.recurringLabor;
+        ytd.recurVisits += m.recurringVisits;
+        ytd.recurInvoices += m.recurringInvoices;
+        ytd.recurExcl += m.recurringExcluded;
+        ytd.hybridRev += m.hybridRevenue;
+        ytd.hybridLab += m.hybridLabor;
+        ytd.hybridJobs += m.hybridJobs;
     }
+    const ytdOneOffMargin = ytd.oneOffRev > 0 ? (ytd.oneOffRev - ytd.oneOffLab) / ytd.oneOffRev : 0;
+    const ytdRecurMargin = ytd.recurRev > 0 ? (ytd.recurRev - ytd.recurLab) / ytd.recurRev : 0;
+    // YTD totals exclude hybrid (different cost structure)
     const ytdTotalRev = ytd.oneOffRev + ytd.recurRev;
-    const ytdGrossProfit = ytdTotalRev - ytd.totalLabor;
+    const ytdTotalLab = ytd.oneOffLab + ytd.recurLab;
+    const ytdGrossProfit = ytdTotalRev - ytdTotalLab;
     const ytdMargin = ytdTotalRev > 0 ? ytdGrossProfit / ytdTotalRev : 0;
     const ytdRow = [
-        "YTD", ytd.oneOffRev, ytd.recurRev, ytdTotalRev,
-        ytd.totalLabor, ytdGrossProfit, ytdMargin, ytd.uninvoiced,
-        ytd.jobs, ytd.recurRows,
+        "YTD",
+        // One-off
+        ytd.oneOffRev, ytd.oneOffLab, ytdOneOffMargin,
+        ytd.oneOffJobs, ytd.oneOffExcl,
+        // Recurring
+        ytd.recurRev, ytd.recurLab, ytdRecurMargin,
+        ytd.recurVisits, ytd.recurInvoices, ytd.recurExcl,
+        // Hybrid
+        ytd.hybridRev, ytd.hybridLab, ytd.hybridJobs,
+        // Totals
+        ytdTotalRev, ytdTotalLab, ytdGrossProfit, ytdMargin,
     ];
-    // 5. Clear old profitability section (rows 18+)
+    // 5. Notes rows explaining methodology (written above the data table)
+    const notesRows = [
+        ["📊 Revenue & Profitability"],
+        [""],
+        ["ℹ️ How numbers are calculated:"],
+        ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
+        ["  Labor      — Sub Invoice Amount (col P). Always counted — labor was spent regardless of whether the client paid."],
+        ["  One-off    — Division = 'Subcontractor - Dayshift' (or unrecognised). Revenue deduped by Job # to prevent double-counting multi-contractor jobs."],
+        ["  Hybrid     — Division = 'Hybrid'. KC in-house labor + one or more PPs on the same job. ⚠️ Margin is a ceiling — KC's own cost of labor is not yet tracked (coming with Hybrid tab)."],
+        ["  Recurring  — Jobs on the {Month} - R tabs. Revenue deduped by Invoice # (one billing cycle invoice covers multiple visits). # Recur. Visits = total invoiced rows; # Recur. Invoices = unique invoices. Divide visits by invoices to understand avg visits per billing cycle. Recurring margin is per-invoice — for per-visit margin, divide by visits/invoices ratio."],
+        ["  Hybrid     — Division = 'Hybrid' on main tabs. Revenue and labor tracked separately; NOT included in Totals (different cost structure — KC in-house labor not tracked here). Hybrid margin TBD in a future update."],
+        ["  # Excluded — Invoiced rows omitted from revenue because the client has not yet paid. Labor is still counted. This shows the gap between work done and confirmed revenue."],
+        ["  Margin %   — Shown per category (One-off, Recurring). Total Margin % = (One-off + Recurring Revenue - Labor) / Revenue. Hybrid excluded from totals."],
+        ["  Invoice gate — Uninvoiced rows are excluded from ALL calculations (revenue and labor). Division is not trusted until a job is invoiced."],
+        [""],
+    ];
+    // 6. Clear old profitability section (rows 18+)
     try {
         await sheets.spreadsheets.values.clear({
             spreadsheetId,
-            range: `'${DASHBOARD_TAB}'!A18:J100`,
+            range: `'${DASHBOARD_TAB}'!A18:S200`,
         });
     }
     catch { /* may be empty */ }
-    // 6. Write section header (row 18)
+    // 7. Write notes + table
+    // Notes start at row 18 (0-based: 17)
+    const NOTES_START_ROW = 18; // 1-based
+    const notesCount = notesRows.length;
+    const TABLE_HEADER_ROW = NOTES_START_ROW + notesCount; // 1-based
+    const TABLE_DATA_START = TABLE_HEADER_ROW + 1; // 1-based
     await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `'${DASHBOARD_TAB}'!A18`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: [["📊 Revenue & Profitability"]] },
+        range: `'${DASHBOARD_TAB}'!A${NOTES_START_ROW}:A${NOTES_START_ROW + notesCount - 1}`,
+        valueInputOption: "RAW",
+        requestBody: { values: notesRows },
     });
-    // 7. Write column headers (row 19), data rows (20+), YTD row
     const allRows = [columnHeaders, ...dataRows, ytdRow];
     await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `'${DASHBOARD_TAB}'!A19:J${19 + allRows.length - 1}`,
+        range: `'${DASHBOARD_TAB}'!A${TABLE_HEADER_ROW}:S${TABLE_HEADER_ROW + allRows.length - 1}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: allRows },
     });
     // 8. Formatting
-    const ytdRowIndex0 = 19 + dataRows.length; // 0-based index of YTD row
+    const ytdRowIndex0 = TABLE_DATA_START - 1 + dataRows.length; // 0-based
+    const tableHeaderIndex0 = TABLE_HEADER_ROW - 1; // 0-based
+    const tableDataStart0 = TABLE_DATA_START - 1; // 0-based
+    const notesStart0 = NOTES_START_ROW - 1; // 0-based
     const formatRequests = [];
-    // Merge header row 18 (0-based: 17) across A–J
+    // Section title row (row 18, 0-based 17): blue bg, white bold, merged A–M
     formatRequests.push({
         mergeCells: {
-            range: { sheetId: dashboardSheetId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 0, endColumnIndex: 10 },
+            range: { sheetId: dashboardSheetId, startRowIndex: notesStart0, endRowIndex: notesStart0 + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
             mergeType: "MERGE_ALL",
         },
     });
-    // Header row 18: blue bg, white text, bold
     formatRequests.push({
         repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: 17, endRowIndex: 18, startColumnIndex: 0, endColumnIndex: 10 },
+            range: { sheetId: dashboardSheetId, startRowIndex: notesStart0, endRowIndex: notesStart0 + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
             cell: {
                 userEnteredFormat: {
                     backgroundColor: { red: 26 / 255, green: 115 / 255, blue: 232 / 255 },
-                    textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                    textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 }, fontSize: 11 },
                 },
             },
             fields: "userEnteredFormat(backgroundColor,textFormat)",
         },
     });
-    // Column header row 19 (0-based: 18): bold
+    // Notes rows: light grey bg, italic, merged A–M
+    for (let i = 1; i < notesCount; i++) {
+        const rowIdx = notesStart0 + i;
+        formatRequests.push({
+            mergeCells: {
+                range: { sheetId: dashboardSheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
+                mergeType: "MERGE_ALL",
+            },
+        });
+        formatRequests.push({
+            repeatCell: {
+                range: { sheetId: dashboardSheetId, startRowIndex: rowIdx, endRowIndex: rowIdx + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
+                cell: {
+                    userEnteredFormat: {
+                        backgroundColor: { red: 243 / 255, green: 243 / 255, blue: 243 / 255 },
+                        textFormat: { italic: true, fontSize: 9 },
+                        wrapStrategy: "WRAP",
+                    },
+                },
+                fields: "userEnteredFormat(backgroundColor,textFormat,wrapStrategy)",
+            },
+        });
+    }
+    // Column header row: bold, light blue bg
     formatRequests.push({
         repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: 18, endRowIndex: 19, startColumnIndex: 0, endColumnIndex: 10 },
-            cell: { userEnteredFormat: { textFormat: { bold: true } } },
-            fields: "userEnteredFormat.textFormat",
+            range: { sheetId: dashboardSheetId, startRowIndex: tableHeaderIndex0, endRowIndex: tableHeaderIndex0 + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
+            cell: {
+                userEnteredFormat: {
+                    backgroundColor: { red: 207 / 255, green: 226 / 255, blue: 255 / 255 },
+                    textFormat: { bold: true },
+                },
+            },
+            fields: "userEnteredFormat(backgroundColor,textFormat)",
         },
     });
-    // YTD row: light green bg (197,224,180), bold
+    // YTD row: light green bg, bold
     formatRequests.push({
         repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 0, endColumnIndex: 10 },
+            range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 0, endColumnIndex: NUM_COLS },
             cell: {
                 userEnteredFormat: {
                     backgroundColor: { red: 197 / 255, green: 224 / 255, blue: 180 / 255 },
@@ -1071,26 +1257,43 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             fields: "userEnteredFormat(backgroundColor,textFormat)",
         },
     });
-    // Currency format on cols B(1), C(2), D(3), E(4), F(5), H(7)
-    for (const col of [1, 2, 3, 4, 5, 7]) {
+    // Clear ALL number formatting on the data+YTD rows first (cols B–S = 1–18)
+    // to prevent stale format types from prior layouts bleeding onto new count columns.
+    formatRequests.push({
+        repeatCell: {
+            range: { sheetId: dashboardSheetId, startRowIndex: tableDataStart0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 1, endColumnIndex: 19 },
+            cell: { userEnteredFormat: { numberFormat: { type: "TEXT" } } },
+            fields: "userEnteredFormat.numberFormat",
+        },
+    });
+    // New layout (19 cols, 0-indexed):
+    //  0=Month
+    //  1=One-off Rev, 2=One-off Labor,              [3=Margin%, 4=# Jobs, 5=# Excl]
+    //  6=Recur Rev,   7=Recur Labor,                [8=Margin%, 9=#Visits, 10=#Inv, 11=#Excl]
+    //  12=Hybrid Rev, 13=Hybrid Labor,              [14=# Jobs]
+    //  15=Total Rev,  16=Total Labor, 17=Gross Profit, [18=Margin%]
+    // Currency cols: 1,2,6,7,12,13,15,16,17
+    for (const col of [1, 2, 6, 7, 12, 13, 15, 16, 17]) {
         formatRequests.push({
             repeatCell: {
-                range: { sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: col, endColumnIndex: col + 1 },
+                range: { sheetId: dashboardSheetId, startRowIndex: tableDataStart0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: col, endColumnIndex: col + 1 },
                 cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
                 fields: "userEnteredFormat.numberFormat",
             },
         });
     }
-    // Percentage format on col G (index 6)
-    formatRequests.push({
-        repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 6, endColumnIndex: 7 },
-            cell: { userEnteredFormat: { numberFormat: { type: "PERCENT", pattern: "0.0%" } } },
-            fields: "userEnteredFormat.numberFormat",
-        },
-    });
-    // Conditional formatting on col G: >=65% green, 40-65% yellow, <40% red
-    const cfRange = [{ sheetId: dashboardSheetId, startRowIndex: 19, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 6, endColumnIndex: 7 }];
+    // Percentage format on margin cols: 3 (One-off), 8 (Recurring), 18 (Total)
+    for (const col of [3, 8, 18]) {
+        formatRequests.push({
+            repeatCell: {
+                range: { sheetId: dashboardSheetId, startRowIndex: tableDataStart0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: col, endColumnIndex: col + 1 },
+                cell: { userEnteredFormat: { numberFormat: { type: "PERCENT", pattern: "0.0%" } } },
+                fields: "userEnteredFormat.numberFormat",
+            },
+        });
+    }
+    // Conditional formatting on Total Margin % col (S, index 18): green ≥65%, yellow 40–65%, red <40%
+    const cfRange = [{ sheetId: dashboardSheetId, startRowIndex: tableDataStart0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 18, endColumnIndex: 19 }];
     formatRequests.push({
         addConditionalFormatRule: {
             rule: {
@@ -1124,7 +1327,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             },
         },
     });
-    // Column widths: A=120, B-J=140
+    // Column widths: A=120, B–M=130
     formatRequests.push({
         updateDimensionProperties: {
             range: { sheetId: dashboardSheetId, dimension: "COLUMNS", startIndex: 0, endIndex: 1 },
@@ -1132,11 +1335,11 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             fields: "pixelSize",
         },
     });
-    for (let col = 1; col <= 9; col++) {
+    for (let col = 1; col < NUM_COLS; col++) {
         formatRequests.push({
             updateDimensionProperties: {
                 range: { sheetId: dashboardSheetId, dimension: "COLUMNS", startIndex: col, endIndex: col + 1 },
-                properties: { pixelSize: 140 },
+                properties: { pixelSize: 130 },
                 fields: "pixelSize",
             },
         });
@@ -1145,7 +1348,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         spreadsheetId,
         requestBody: { requests: formatRequests },
     });
-    console.log(`  Profitability: ${monthData.length} months written to Dashboard`);
+    console.log(`  Profitability: ${monthData.length} months written to Dashboard (one-off/hybrid/recurring split)`);
 }
 /**
  * Extend all conditional format rules on a tab so they cover up to maxRow rows.

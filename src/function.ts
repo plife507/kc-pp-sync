@@ -757,6 +757,107 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // Handle addMismatchCF: add row-highlight for "client paid but still NO CLIENT PAY" rows
+    // Formula: =AND($N2="✅", $S2="NO CLIENT PAY") — orange highlight across entire row
+    // Col N = All Paid? (index 13), Col S = Payment Status (index 18)
+    // Applies to all new-layout month tabs (not recurring, not GTP)
+    if (req.body?.addMismatchCF) {
+      const { google } = await import("googleapis");
+      const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+      const sheets = google.sheets({ version: "v4", auth: gauth as any });
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId: config.sheets.spreadsheetId,
+        fields: "sheets.properties",
+      });
+      const allTabs = (meta.data.sheets ?? []).map((s: any) => s.properties?.title as string).filter(Boolean);
+      // Only new-layout one-off month tabs (not " - R", not " - GTP $", not Dashboard, not Command)
+      const monthTabs = allTabs.filter((t: string) =>
+        !t.includes(" - R") && !t.includes(" - GTP") && !t.includes("Dashboard") && !t.includes("Command") &&
+        !t.includes("EFRAIN") && !t.includes("JASON") && t.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)
+      );
+      const tabResults: Record<string, string> = {};
+      for (const tabName of monthTabs) {
+        const sheet = meta.data.sheets?.find((s: any) => s.properties?.title === tabName);
+        if (!sheet) continue;
+        const sheetId = sheet.properties!.sheetId!;
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: config.sheets.spreadsheetId,
+          requestBody: {
+            requests: [{
+              addConditionalFormatRule: {
+                rule: {
+                  ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 0, endColumnIndex: 39 }],
+                  booleanRule: {
+                    condition: { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: '=AND($N2="✅",$S2="NO CLIENT PAY")' }] },
+                    format: { backgroundColor: { red: 1, green: 0.749, blue: 0.424 } }, // orange amber
+                  },
+                },
+                index: 0, // insert at top priority
+              },
+            }],
+          },
+        });
+        tabResults[tabName] = "ok";
+      }
+      // Also add to recurring tabs (" - R") with adjusted formula
+      // Recurring layout: Col O = Jobber Invoice Status, Col U = Payment Status (26-col legacy)
+      const recurringTabs = allTabs.filter((t: string) =>
+        t.includes(" - R") && !t.includes("GTP") && t.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/)
+      );
+      for (const tabName of recurringTabs) {
+        const sheet = meta.data.sheets?.find((s: any) => s.properties?.title === tabName);
+        if (!sheet) continue;
+        const sheetId = sheet.properties!.sheetId!;
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: config.sheets.spreadsheetId,
+          requestBody: {
+            requests: [{
+              addConditionalFormatRule: {
+                rule: {
+                  ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 0, endColumnIndex: 26 }],
+                  booleanRule: {
+                    condition: { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: '=AND($O2="Paid",$U2="NO CLIENT PAY")' }] },
+                    format: { backgroundColor: { red: 1, green: 0.749, blue: 0.424 } }, // orange amber
+                  },
+                },
+                index: 0, // insert at top priority
+              },
+            }],
+          },
+        });
+        tabResults[tabName] = "ok";
+      }
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      res.json({ status: "ok", elapsed: `${elapsed}s`, tabs: tabResults });
+      return;
+    }
+
+    // Handle deleteRules: delete specific CF rules by index on a tab (provide indices in descending order)
+    if (req.body?.deleteRules) {
+      const tabName = req.body.deleteRules as string;
+      const indices: number[] = req.body.indices || [];
+      const { google } = await import("googleapis");
+      const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+      const sheets = google.sheets({ version: "v4", auth: gauth as any });
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId: config.sheets.spreadsheetId,
+        fields: "sheets(properties,conditionalFormats)",
+      });
+      const sheet = meta.data.sheets?.find((s: any) => s.properties?.title === tabName);
+      if (!sheet) { res.json({ error: `Tab "${tabName}" not found` }); return; }
+      const sheetId = sheet.properties!.sheetId!;
+      // Delete in descending order to preserve indices
+      const sortedDesc = [...indices].sort((a, b) => b - a);
+      const requests = sortedDesc.map(idx => ({
+        deleteConditionalFormatRule: { sheetId, index: idx }
+      }));
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId: config.sheets.spreadsheetId, requestBody: { requests } });
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      res.json({ status: "ok", elapsed: `${elapsed}s`, tab: tabName, deletedIndices: sortedDesc });
+      return;
+    }
+
     // Handle debugCF request: dump CF rules covering a specific column on a tab
     if (req.body?.debugCF) {
       const tabName = req.body.debugCF as string;
