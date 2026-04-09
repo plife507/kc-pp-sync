@@ -945,20 +945,36 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
   if (!dashSheet) return;
   const dashboardSheetId = dashSheet.properties!.sheetId!;
 
-  // 2. Month definitions
-  const MONTHS_TO_SCAN: Array<{ display: string; oneOffTab: string; recurringTab: string; type: "legacy" | "new" }> = [
-    { display: "February", oneOffTab: "February", recurringTab: "Feb - R", type: "legacy" },
-    { display: "March",    oneOffTab: "March",          recurringTab: "March - R", type: "new" },
-    { display: "April",    oneOffTab: "April",          recurringTab: "April - R", type: "new" },
-    { display: "May",      oneOffTab: "May",            recurringTab: "May - R",   type: "new" },
-    { display: "June",     oneOffTab: "June",           recurringTab: "June - R",  type: "new" },
-    { display: "July",     oneOffTab: "July",           recurringTab: "July - R",  type: "new" },
-    { display: "August",   oneOffTab: "August",         recurringTab: "August - R",   type: "new" },
-    { display: "September",oneOffTab: "September",      recurringTab: "September - R",type: "new" },
-    { display: "October",  oneOffTab: "October",        recurringTab: "October - R",  type: "new" },
-    { display: "November", oneOffTab: "November",       recurringTab: "November - R", type: "new" },
-    { display: "December", oneOffTab: "December",       recurringTab: "December - R", type: "new" },
-  ];
+  // 2. Auto-discover month tabs from spreadsheet (no hardcoded list)
+  // Recurring tab naming: "Feb - R" (abbreviated), all others "{Month} - R"
+  const RECURRING_TAB_ABBREVS: Record<string, string> = {
+    "January": "Jan - R", "February": "Feb - R", "March": "March - R",
+    "April": "April - R", "May": "May - R", "June": "June - R",
+    "July": "July - R", "August": "August - R", "September": "September - R",
+    "October": "October - R", "November": "November - R", "December": "December - R",
+  };
+  const tabSet = new Set(allTabs);
+  const MONTHS_TO_SCAN: Array<{ display: string; oneOffTab: string; recurringTab: string; type: "legacy" | "new" }> = [];
+
+  for (const monthName of MONTH_NAMES) {
+    if (monthName === "January") continue; // January excluded per Nathan
+    // Find the one-off tab: try bare name first, then with year suffix
+    let oneOffTab = "";
+    if (tabSet.has(monthName)) {
+      oneOffTab = monthName;
+    } else {
+      // Try year suffixes (2025, 2026, 2027...)
+      for (let year = 2025; year <= 2030; year++) {
+        if (tabSet.has(`${monthName} ${year}`)) { oneOffTab = `${monthName} ${year}`; break; }
+      }
+    }
+    if (!oneOffTab) continue; // Tab doesn't exist yet — skip
+
+    const recurringTab = RECURRING_TAB_ABBREVS[monthName] || `${monthName} - R`;
+    const type = isNewLayout(oneOffTab) ? "new" : "legacy";
+    MONTHS_TO_SCAN.push({ display: monthName, oneOffTab, recurringTab, type });
+  }
+  console.log(`  Profitability: discovered ${MONTHS_TO_SCAN.length} months: ${MONTHS_TO_SCAN.map(m => m.display).join(", ")}`);
 
   // 3. Aggregate data per month
   const monthData: Array<{
@@ -1118,28 +1134,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
         });
         const rows = (res.data.values ?? []) as string[][];
 
-        for (const row of rows) {
-          const jobNum     = (row[5]  ?? "").toString().trim();
-          if (!jobNum) continue;
-          const invoiceNum = (row[11] ?? "").toString().trim();
-          // Invoice gate: skip rows not yet invoiced
-          if (!invoiceNum || invoiceNum === "-") continue;
-
-          const invTotal  = (row[12] ?? "").toString().trim();
-          const invStatus = (row[14] ?? "").toString().trim();
-          const labor     = parseDollarAmount((row[17] ?? "").toString());
-
-          const clientPaid = invStatus.toLowerCase() === "paid";
-
-          recurringVisits++;
-          seenRecurringInvoices.add(invoiceNum);
-
-          // Labor + Revenue: only count when client has paid
-          if (clientPaid) {
-            recurringLabor += labor;
-          }
-        }
-        // Revenue dedup: one invoice covers multiple visits, count revenue once per invoice
+        // Single pass: track visits + labor per row, revenue dedup by Invoice #
         const seenPaidInvoices = new Set<string>();
         const seenUnpaidInvoices = new Set<string>();
         for (const row of rows) {
@@ -1147,12 +1142,23 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
           if (!jobNum) continue;
           const invoiceNum = (row[11] ?? "").toString().trim();
           if (!invoiceNum || invoiceNum === "-") continue;
+
           const invTotal  = (row[12] ?? "").toString().trim();
           const invStatus = (row[14] ?? "").toString().trim();
-          if (invStatus.toLowerCase() === "paid" && !seenPaidInvoices.has(invoiceNum)) {
-            seenPaidInvoices.add(invoiceNum);
-            recurringRevenue += parseDollarAmount(invTotal);
-          } else if (invStatus.toLowerCase() !== "paid" && !seenUnpaidInvoices.has(invoiceNum)) {
+          const labor     = parseDollarAmount((row[17] ?? "").toString());
+          const clientPaid = invStatus.toLowerCase() === "paid";
+
+          recurringVisits++;
+          seenRecurringInvoices.add(invoiceNum);
+
+          if (clientPaid) {
+            recurringLabor += labor;
+            // Revenue: dedup by Invoice # (one invoice covers multiple visits)
+            if (!seenPaidInvoices.has(invoiceNum)) {
+              seenPaidInvoices.add(invoiceNum);
+              recurringRevenue += parseDollarAmount(invTotal);
+            }
+          } else if (!seenUnpaidInvoices.has(invoiceNum)) {
             seenUnpaidInvoices.add(invoiceNum);
             recurringExcluded++;
           }

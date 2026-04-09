@@ -694,6 +694,12 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
       config.sheets.sheetsTab = resolved;
       console.log(`  Mode '${bodyMode}' → tab '${resolved}'`);
     } else if (bodyTab && typeof bodyTab === "string") {
+      // Guard: reject GTP, Dashboard, and Command tabs as sync targets
+      const lowerTab = bodyTab.toLowerCase();
+      if (lowerTab.includes("gtp") || lowerTab === "dashboard" || lowerTab === "command") {
+        res.status(400).json({ status: "error", error: `Tab "${bodyTab}" is a derived/system tab and cannot be synced directly.` });
+        return;
+      }
       config.sheets.sheetsTab = bodyTab;
     }
 
