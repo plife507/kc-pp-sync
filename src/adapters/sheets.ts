@@ -478,6 +478,7 @@ interface MonthStats {
  */
 function getDashboardColIndices(tabName: string): {
   paymentStatus: number;
+  paymentTracking: number;
   subInvoiceAmount: number;
   allPaid: number;
 } {
@@ -485,10 +486,12 @@ function getDashboardColIndices(tabName: string): {
 
   if (isRecurring || !isNewLayout(tabName)) {
     // Legacy (Jan/Feb with or without year suffix) and recurring tabs
-    return { paymentStatus: 20, subInvoiceAmount: 17, allPaid: 14 };
+    // V (index 21) = Payment Tracking
+    return { paymentStatus: 20, paymentTracking: 21, subInvoiceAmount: 17, allPaid: 14 };
   }
   // New layout (March+)
-  return { paymentStatus: 18, subInvoiceAmount: 15, allPaid: 13 };
+  // T (index 19) = Payment Tracking
+  return { paymentStatus: 18, paymentTracking: 19, subInvoiceAmount: 15, allPaid: 13 };
 }
 
 /**
@@ -546,7 +549,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
 
   for (const tab of scanTabs) {
     const cols = getDashboardColIndices(tab);
-    const maxCol = Math.max(cols.paymentStatus, cols.subInvoiceAmount, cols.allPaid);
+    const maxCol = Math.max(cols.paymentStatus, cols.paymentTracking, cols.subInvoiceAmount, cols.allPaid);
     // Convert max column index to letter for range
     const endColLetter = String.fromCharCode(65 + Math.min(maxCol, 25));
     const range = maxCol > 25
@@ -589,6 +592,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       if (!jobNum) continue;
 
       const paymentStatus = (row[cols.paymentStatus] ?? "").toString().trim();
+      const paymentTracking = (row[cols.paymentTracking] ?? "").toString().trim();
       const subAmount = parseDollarAmount((row[cols.subInvoiceAmount] ?? "").toString());
       const allPaidVal = (row[cols.allPaid] ?? "").toString().trim();
 
@@ -604,10 +608,14 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       stats.total++;
       stats.totalAmount += subAmount;
 
-      // Dashboard tracks sub payment status via Payment Status column only.
-      // AllPaid (client payment to KC) is visible on the sheet but does NOT drive dashboard buckets.
+      // Dashboard bucket logic:
+      // 1. Payment Tracking = "PAID" → subcontractor has been paid → count as Paid
+      // 2. Otherwise, use Payment Status to classify into GTP / On Hold / Pending / NCP / Blank
+      const trackingLower = paymentTracking.toLowerCase();
       const statusLower = paymentStatus.toLowerCase();
-      if (statusLower === "paid") {
+
+      if (trackingLower === "paid") {
+        // Subcontractor has been paid (KC released payment)
         stats.paid++;
         stats.paidAmount += subAmount;
       } else if (statusLower === "good to pay") {
