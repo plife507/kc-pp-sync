@@ -2,7 +2,7 @@
 
 **Created:** 2026-04-09  
 **Source:** `AUDIT-2026-04-09.md` + live investigation  
-**Status:** READY TO EXECUTE
+**Status:** PHASES 1–3 COMPLETE
 
 ---
 
@@ -14,10 +14,11 @@
 - **File:** `sheets.ts` → `refreshProfitabilityDashboard()` line ~949
 - **Bug:** `oneOffTab: "February 2026"` but tab was renamed to `"February"` today
 - **Impact:** February one-off completely missing from profitability. Dashboard shows $0 rev / $0 labor for Feb one-off. (Feb - R still works because `recurringTab: "Feb - R"` is correct.)
-- **Fix:** Change `oneOffTab: "February 2026"` → `oneOffTab: "February"`
-- **Verify:** Profitability refresh → February one-off row populates. Compare with manual sheet check.
-- [ ] Fixed
-- [ ] Verified
+- **Fix:** Changed `oneOffTab: "February 2026"` → `oneOffTab: "February"`. Then replaced with dynamic discovery in Phase 2.
+- **Verify:** Feb one-off now shows $113,010 rev / $28,219 labor / 75.0% margin ✅
+- [x] Fixed (commit 2059b95, Phase 1)
+- [x] Superseded by dynamic discovery (commit 2bba3da, Phase 2)
+- [x] Verified
 
 ### 1.2 Fix `getDashboardColIndices()` for legacy tabs without year suffix
 - **File:** `sheets.ts` → `getDashboardColIndices()` line ~480
@@ -27,26 +28,20 @@
   - `# Blank = 136` — col 18 (KCPC Released Amount) read as Payment Status, all blank
   - Every other stat (Paid, GTP, Hold, NCP) = 0
 - **Evidence:** Verified col 15 = "Date Invoice Paid" (date strings), col 18 = "KCPC Released Amount" (mostly blank)
-- **Fix:** Replace standalone regex with `isNewLayout()` call — already handles `legacyMonths = ["January", "February"]` correctly
-- **Verify:** February dashboard row should show real stats (total=136, paid/gtp/etc actual counts)
-- [ ] Fixed
-- [ ] Verified
+- **Fix:** Replaced standalone regex with `isNewLayout()` call
+- **Verify:** February dashboard: Total $40,404 / 131 GTP / 1 On Hold / 1 Pending / 1 Blank ✅
+- [x] Fixed (commit 2059b95)
+- [x] Verified
 
 ### 1.3 Fix Dashboard paid status — use only Payment Status column
 - **File:** `sheets.ts` → `refreshDashboard()` line ~609
 - **Bug:** `if (statusLower === "paid" || isPaid)` — `isPaid` checks AllPaid column (✅ = client paid Jobber invoice). This catches rows where Payment Status = "Good to Pay" and misclassifies them as "Paid".
 - **Impact:** March shows `# Paid = 216, # Good to Pay = 0`. Reality: ALL 184 ✅ rows have Payment Status = "Good to Pay" (KC hasn't released sub payment yet). Zero rows have Payment Status = "Paid".
 - **Decision:** Payment Status column is the source of truth for the dashboard. AllPaid (client payment) is already visible in the sheet. Dashboard tracks **sub payment** status.
-- **Fix:** Remove `|| isPaid` from the check. Dashboard uses only Payment Status column for classification.
-  ```
-  // Before:
-  if (statusLower === "paid" || isPaid) {
-  // After:
-  if (statusLower === "paid") {
-  ```
-- **Verify:** March dashboard: # Paid drops to actual "Paid" count, # Good to Pay = 184
-- [ ] Fixed
-- [ ] Verified
+- **Fix:** Removed `|| isPaid`. Dashboard uses only Payment Status column.
+- **Verify:** March: Paid=0, GTP=216 (was Paid=216, GTP=0) ✅
+- [x] Fixed (commit 2059b95)
+- [x] Verified
 
 ### 1.4 Fix profitability: only count labor when client has paid
 - **File:** `sheets.ts` → `refreshProfitabilityDashboard()`
@@ -74,12 +69,12 @@
   2. **New layout one-off** (~line 1073): Add `if (allPaid === "✅")` gate before counting labor
   3. **Recurring** (~line 1121): Add `if (invStatus.toLowerCase() === "paid")` gate before counting labor
 - **NCP edge case:** NCP jobs (AllPaid=❌, PayStatus="NO CLIENT PAY") will have $0 labor AND $0 revenue in profitability. They're tracked in # Excluded count. This is correct — if client didn't pay, the margin calculation shouldn't include that job.
-- **# Excluded column:** Currently counts rows excluded from revenue. After fix, it counts rows excluded from BOTH revenue AND labor (same rows). Update note text.
-- [ ] Fixed (legacy)
-- [ ] Fixed (new layout)
-- [ ] Fixed (recurring)
-- [ ] Methodology notes updated
-- [ ] Verified
+- **# Excluded column:** Now counts rows excluded from BOTH revenue AND labor. Notes updated.
+- [x] Fixed legacy (commit 2059b95)
+- [x] Fixed new layout (commit 2059b95)
+- [x] Fixed recurring (commit 2059b95)
+- [x] Methodology notes updated (commit 2059b95)
+- [x] Verified: Mar one-off labor $77,193→$70,373, recurring $7,200→$5,265, margins up
 
 ### 1.5 Fix `parseDollarAmount()` to reject date strings
 - **File:** `sheets.ts` → `parseDollarAmount()`
@@ -87,7 +82,7 @@
 - **Evidence:** February `Total $ = $289.00` = sum of month numbers from 133 date cells
 - **Fix:** After parseFloat, validate the full cleaned string is numeric: `/^[\d,.]+$/.test(cleaned)`. If not, return 0.
 - **This prevents H-2 from silently corrupting data even if column detection breaks again.**
-- [ ] Fixed
+- [x] Fixed (commit 2059b95)
 
 ---
 
@@ -96,28 +91,29 @@
 ### 2.1 Unify legacy layout detection into single function
 - **Files:** `sheets.ts` — all 4 detection sites
 - **Problem:** `getDashboardColIndices()` uses its own regex instead of `isNewLayout()`. Caused H-2.
-- **Fix:** All paths call `isNewLayout()` as single source of truth. Remove duplicate regex.
-- [ ] Fixed
-- [ ] Verified
+- **Fix:** All paths call `isNewLayout()` as single source of truth. Duplicate regex removed.
+- [x] Fixed (commit 2059b95, Phase 1)
+- [x] Verified
 
 ### 2.2 Auto-discover month tabs in profitability dashboard
 - **File:** `sheets.ts` → `refreshProfitabilityDashboard()`
 - **Problem:** Hardcoded `MONTHS_TO_SCAN` array. Adding a month or renaming a tab requires code change. Caused H-1.
-- **Fix:** Scan all sheet tabs dynamically (like `refreshDashboard()` already does). Derive recurring tab name and layout type using existing functions.
-- [ ] Fixed
-- [ ] Verified
+- **Fix:** Dynamic tab discovery implemented. Scans spreadsheet metadata, handles bare names and year suffixes, maps recurring tab abbreviations.
+- [x] Fixed (commit 2bba3da)
+- [x] Verified: All profitability numbers unchanged after switch to dynamic discovery
 
 ### 2.3 Clean up recurring revenue dedup dead code
 - **File:** `sheets.ts` → `refreshProfitabilityDashboard()` recurring section
 - **Bug:** First pass adds invoiceNum to set THEN checks `.has()` → always true → dead code. Second pass handles it correctly.
-- **Fix:** Remove dead first-pass revenue check.
-- [ ] Fixed
+- **Fix:** Merged into single-pass loop. Dead first-pass code removed.
+- [x] Fixed (commit 2bba3da)
 
 ### 2.4 Add GTP tab sync guard
 - **File:** `function.ts` → main handler
 - **Problem:** GTP/Dashboard/Command tabs crash when passed as sync target.
-- **Fix:** Early 400 return if tab name matches GTP/Dashboard/Command patterns.
-- [ ] Fixed
+- **Fix:** Early 400 return with clear error message for GTP/Dashboard/Command tabs.
+- [x] Fixed (commit 2bba3da)
+- [x] Verified: `{"status":"error","error":"Tab ... is a derived/system tab and cannot be synced directly."}`
 
 ---
 
@@ -127,13 +123,13 @@
 - **Current:** 22 images in `gcf-artifacts`, ~32MB each = ~700MB (free tier: 500MB)
 - **Fix:** Delete all untagged images. Keep `latest` + 2 most recent by date.
 - **Command:** `gcloud artifacts docker images delete <image>@<digest> --delete-tags --quiet`
-- [ ] Pruned
-- [ ] Verified < 500MB
+- [x] Pruned: 26 images → 1 (latest only). ~832MB → ~32MB.
+- [x] Verified < 500MB
 
 ### 3.2 Prune Secret Manager old versions
 - **Current:** 10 secrets, ~13 versions. Free tier: 6 active.
-- **Fix:** Destroy disabled versions.
-- [ ] Pruned
+- **Fix:** Destroyed 4 disabled versions (HEYPROS_EMAIL/1, HEYPROS_PASSWORD/1, VIP_SLACK_CHANNEL_ID/1+2).
+- [x] Pruned: 13 versions → 10 (all enabled)
 
 ### 3.3 Cloud Scheduler — accept $0.20/month
 - **Current:** 5 jobs (3 free). $0.20/month for 2 extra.
