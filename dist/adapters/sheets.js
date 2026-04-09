@@ -63,11 +63,12 @@ export const AUTO_COL_LETTERS_LEGACY = new Set(["A", "C", "D", "E", "G", "H", "I
 export const RECURRING_AUTO_COL_LETTERS = new Set(["A", "C", "D", "E", "G", "H", "I", "J", "K", "M", "N", "O", "P", "Q", "R", "T", "Z"]);
 /** Determine if a tab uses the new 39-column layout (March-forward) or legacy 26-column. */
 export function isNewLayout(tabName) {
-    // Legacy tabs: "January 2026", "February 2026"
-    // New tabs: "March", "April", etc. (no year suffix)
+    // Legacy tabs: "January 2026", "February 2026", "January", "February"
+    // New tabs: "March", "April", etc. (no year suffix, and not Jan/Feb)
     // Recurring tabs use their own flow, not affected by this
     const legacyPattern = /^\w+\s+\d{4}$/;
-    return !legacyPattern.test(tabName);
+    const legacyMonths = ["January", "February"];
+    return !legacyPattern.test(tabName) && !legacyMonths.includes(tabName);
 }
 /**
  * Read Job # (col F) and Invoice # (col L) and HeyPros ID (col E) from a recurring tab.
@@ -390,11 +391,11 @@ const MONTH_NAMES = [
  */
 function getDashboardColIndices(tabName) {
     const isRecurring = tabName.endsWith(" - R");
-    const isLegacy = /^\w+\s+\d{4}$/.test(tabName);
-    if (isRecurring || isLegacy) {
+    if (isRecurring || !isNewLayout(tabName)) {
+        // Legacy (Jan/Feb with or without year suffix) and recurring tabs
         return { paymentStatus: 20, subInvoiceAmount: 17, allPaid: 14 };
     }
-    // New layout
+    // New layout (March+)
     return { paymentStatus: 18, subInvoiceAmount: 15, allPaid: 13 };
 }
 /**
@@ -413,6 +414,9 @@ function parseDollarAmount(val) {
     if (!val)
         return 0;
     const cleaned = val.replace(/[$,]/g, "").trim();
+    // Reject non-numeric strings (e.g. dates like "2/3/2026" where parseFloat returns 2)
+    if (!/^[\d.]+$/.test(cleaned))
+        return 0;
     const num = parseFloat(cleaned);
     return isNaN(num) ? 0 : num;
 }
@@ -499,10 +503,10 @@ export async function refreshDashboard(spreadsheetId) {
             }
             stats.total++;
             stats.totalAmount += subAmount;
-            // Determine if "paid" — new layout: ✅, legacy: "Paid" or "✅"
-            const isPaid = allPaidVal === "✅" || allPaidVal === "Paid";
+            // Dashboard tracks sub payment status via Payment Status column only.
+            // AllPaid (client payment to KC) is visible on the sheet but does NOT drive dashboard buckets.
             const statusLower = paymentStatus.toLowerCase();
-            if (statusLower === "paid" || isPaid) {
+            if (statusLower === "paid") {
                 stats.paid++;
                 stats.paidAmount += subAmount;
             }
@@ -824,7 +828,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
     const dashboardSheetId = dashSheet.properties.sheetId;
     // 2. Month definitions
     const MONTHS_TO_SCAN = [
-        { display: "February", oneOffTab: "February 2026", recurringTab: "Feb - R", type: "legacy" },
+        { display: "February", oneOffTab: "February", recurringTab: "Feb - R", type: "legacy" },
         { display: "March", oneOffTab: "March", recurringTab: "March - R", type: "new" },
         { display: "April", oneOffTab: "April", recurringTab: "April - R", type: "new" },
         { display: "May", oneOffTab: "May", recurringTab: "May - R", type: "new" },
@@ -886,25 +890,28 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                         if (payStatus.toLowerCase().startsWith("no payment"))
                             continue;
                         const isHybrid = division === "Hybrid";
-                        // Labor: count for all invoiced rows
-                        if (isHybrid) {
-                            hybridLabor += labor;
-                            seenHybridJobs.add(jobNum);
+                        const clientPaid = invStatus.toLowerCase() === "paid";
+                        // Labor + Revenue: only count when client has paid
+                        if (clientPaid) {
+                            if (isHybrid) {
+                                hybridLabor += labor;
+                                seenHybridJobs.add(jobNum);
+                            }
+                            else {
+                                oneOffLabor += labor;
+                                seenOneOffJobs.add(jobNum);
+                            }
+                            // Revenue: dedup by Invoice #
+                            if (!seenInvoices.has(invoiceNum)) {
+                                seenInvoices.add(invoiceNum);
+                                const rev = parseDollarAmount(invTotal);
+                                if (isHybrid)
+                                    hybridRevenue += rev;
+                                else
+                                    oneOffRevenue += rev;
+                            }
                         }
-                        else {
-                            oneOffLabor += labor;
-                            seenOneOffJobs.add(jobNum);
-                        }
-                        // Revenue: only when Jobber invoice is Paid, dedup by Invoice #
-                        if (invStatus.toLowerCase() === "paid" && !seenInvoices.has(invoiceNum)) {
-                            seenInvoices.add(invoiceNum);
-                            const rev = parseDollarAmount(invTotal);
-                            if (isHybrid)
-                                hybridRevenue += rev;
-                            else
-                                oneOffRevenue += rev;
-                        }
-                        else if (invStatus.toLowerCase() !== "paid" && !isHybrid) {
+                        else if (!isHybrid) {
                             oneOffExcluded++;
                         }
                     }
@@ -934,25 +941,28 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                         if (payStatus.toLowerCase().startsWith("no payment"))
                             continue;
                         const isHybrid = division === "Hybrid";
-                        // Labor: count for all invoiced rows
-                        if (isHybrid) {
-                            hybridLabor += labor;
-                            seenHybridJobs.add(jobNum);
+                        const clientPaid = allPaid === "✅";
+                        // Labor + Revenue: only count when client has paid
+                        if (clientPaid) {
+                            if (isHybrid) {
+                                hybridLabor += labor;
+                                seenHybridJobs.add(jobNum);
+                            }
+                            else {
+                                oneOffLabor += labor;
+                                seenOneOffJobs.add(jobNum);
+                            }
+                            // Revenue: dedup by Job #
+                            if (!seenJobsForRevenue.has(jobNum)) {
+                                seenJobsForRevenue.add(jobNum);
+                                const rev = parseDollarAmount(invTotal);
+                                if (isHybrid)
+                                    hybridRevenue += rev;
+                                else
+                                    oneOffRevenue += rev;
+                            }
                         }
-                        else {
-                            oneOffLabor += labor;
-                            seenOneOffJobs.add(jobNum);
-                        }
-                        // Revenue: only when All Paid? = "✅", dedup by Job #
-                        if (allPaid === "✅" && !seenJobsForRevenue.has(jobNum)) {
-                            seenJobsForRevenue.add(jobNum);
-                            const rev = parseDollarAmount(invTotal);
-                            if (isHybrid)
-                                hybridRevenue += rev;
-                            else
-                                oneOffRevenue += rev;
-                        }
-                        else if (allPaid !== "✅" && !isHybrid) {
+                        else if (!isHybrid) {
                             oneOffExcluded++;
                         }
                     }
@@ -988,15 +998,15 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                     const invTotal = (row[12] ?? "").toString().trim();
                     const invStatus = (row[14] ?? "").toString().trim();
                     const labor = parseDollarAmount((row[17] ?? "").toString());
+                    const clientPaid = invStatus.toLowerCase() === "paid";
                     recurringVisits++;
-                    recurringLabor += labor;
                     seenRecurringInvoices.add(invoiceNum);
-                    if (invStatus.toLowerCase() === "paid" && !seenRecurringInvoices.has(invoiceNum)) {
-                        // Note: seenRecurringInvoices already added above; this check won't fire.
-                        // Revenue dedup handled by checking set before adding:
+                    // Labor + Revenue: only count when client has paid
+                    if (clientPaid) {
+                        recurringLabor += labor;
                     }
                 }
-                // Redo revenue dedup cleanly in a second pass to keep logic readable
+                // Revenue dedup: one invoice covers multiple visits, count revenue once per invoice
                 const seenPaidInvoices = new Set();
                 const seenUnpaidInvoices = new Set();
                 for (const row of rows) {
@@ -1146,12 +1156,12 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         [""],
         ["ℹ️ How numbers are calculated:"],
         ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
-        ["  Labor      — Sub Invoice Amount (col P). Always counted — labor was spent regardless of whether the client paid."],
+        ["  Labor      — Sub Invoice Amount (col P/R). Counted only when client has paid (same gate as revenue). If client hasn't paid, labor is excluded — those jobs appear in # Excluded."],
         ["  One-off    — Division = 'Subcontractor - Dayshift' (or unrecognised). Revenue deduped by Job # to prevent double-counting multi-contractor jobs."],
         ["  Hybrid     — Division = 'Hybrid'. KC in-house labor + one or more PPs on the same job. ⚠️ Margin is a ceiling — KC's own cost of labor is not yet tracked (coming with Hybrid tab)."],
         ["  Recurring  — Jobs on the {Month} - R tabs. Revenue deduped by Invoice # (one billing cycle invoice covers multiple visits). # Recur. Visits = total invoiced rows; # Recur. Invoices = unique invoices. Divide visits by invoices to understand avg visits per billing cycle. Recurring margin is per-invoice — for per-visit margin, divide by visits/invoices ratio."],
         ["  Hybrid     — Division = 'Hybrid' on main tabs. Revenue and labor tracked separately; NOT included in Totals (different cost structure — KC in-house labor not tracked here). Hybrid margin TBD in a future update."],
-        ["  # Excluded — Invoiced rows omitted from revenue because the client has not yet paid. Labor is still counted. This shows the gap between work done and confirmed revenue."],
+        ["  # Excluded — Invoiced rows where the client has not yet paid. Both revenue AND labor are excluded. This shows jobs completed but not yet billable for profitability."],
         ["  Margin %   — Shown per category (One-off, Recurring). Total Margin % = (One-off + Recurring Revenue - Labor) / Revenue. Hybrid excluded from totals."],
         ["  Invoice gate — Uninvoiced rows are excluded from ALL calculations (revenue and labor). Division is not trusted until a job is invoiced."],
         [""],
@@ -1397,4 +1407,17 @@ export async function extendTabCF(spreadsheetId, tabName, maxRow = 500) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
     console.log(`  extendTabCF: extended ${requests.length} CF rules on "${tabName}" to row ${maxRow}`);
     return requests.length;
+}
+export async function renameTab(spreadsheetId, from, to) {
+    const sheets = await getSheetsClient();
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets(properties(sheetId,title))" });
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === from);
+    if (!sheet)
+        throw new Error(`Tab "${from}" not found`);
+    const sheetId = sheet.properties.sheetId;
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: [{ updateSheetProperties: { properties: { sheetId, title: to }, fields: "title" } }] }
+    });
+    console.log(`Renamed tab "${from}" → "${to}"`);
 }

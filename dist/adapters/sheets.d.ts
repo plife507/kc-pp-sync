@@ -125,3 +125,4 @@ export declare function refreshProfitabilityDashboard(spreadsheetId: string): Pr
  * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
  */
 export declare function extendTabCF(spreadsheetId: string, tabName: string, maxRow?: number): Promise<number>;
+export declare function renameTab(spreadsheetId: string, from: string, to: string): Promise<void>;

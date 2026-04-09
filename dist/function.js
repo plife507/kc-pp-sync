@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -803,6 +803,14 @@ export async function kcPPSync(req, res) {
             return;
         }
         // Handle extendCF request: extend CF rules on a tab to 500 rows
+        // Handle renameTab: { renameTab: { from: "old name", to: "new name" } }
+        if (req.body?.renameTab) {
+            const { from, to } = req.body.renameTab;
+            await renameTab(config.sheets.spreadsheetId, from, to);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            res.json({ status: "ok", elapsed: `${elapsed}s`, renamed: { from, to } });
+            return;
+        }
         if (req.body?.extendCF) {
             const tabName = req.body.extendCF;
             console.log(`Extending CF rules on "${tabName}" to 500 rows`);
