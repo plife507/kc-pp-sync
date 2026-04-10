@@ -522,7 +522,7 @@ describe("Margin % calculation (col C)", () => {
       const totalInvoiced = parseFloat(totalInvoicedStr);
 
       if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
-        for (const u of group) u.values.C = "N/A";
+        for (const u of group) u.values.C = "";
         continue;
       }
 
@@ -568,14 +568,14 @@ describe("Margin % calculation (col C)", () => {
     assert.equal(updates[0].values.C, "70.0%");
   });
 
-  it("single contractor unpaid → N/A", () => {
+  it("single contractor unpaid → blank", () => {
     const updates = [{
       rowIndex: 2,
       _jobNumber: "100",
       values: { C: "", L: "Residential", N: "1000.00", O: "❌", Q: "300.00", Y: "" } as Record<string, string>,
     }];
     computeMargins(updates, true);
-    assert.equal(updates[0].values.C, "N/A");
+    assert.equal(updates[0].values.C, "");
   });
 
   it("multi-contractor (2 rows same job#) → same margin on both + auto note", () => {
@@ -611,14 +611,14 @@ describe("Margin % calculation (col C)", () => {
     assert.equal(updates[0].values.C, "");
   });
 
-  it("Total Invoiced = 0 → N/A", () => {
+  it("Total Invoiced = 0 → blank", () => {
     const updates = [{
       rowIndex: 2,
       _jobNumber: "400",
       values: { C: "", L: "Residential", N: "0", O: "✅", Q: "300.00", Y: "" } as Record<string, string>,
     }];
     computeMargins(updates, true);
-    assert.equal(updates[0].values.C, "N/A");
+    assert.equal(updates[0].values.C, "");
   });
 
   it("Sub Invoice Amount = 0 → blank (no sub invoice data)", () => {
@@ -651,13 +651,13 @@ describe("Margin % calculation (col C)", () => {
     assert.equal(updates[0].values.C, "75.0%");
   });
 
-  it("legacy layout: unpaid invoice status → N/A", () => {
+  it("legacy layout: unpaid invoice status → blank", () => {
     const updates = [{
       rowIndex: 2,
       _jobNumber: "800",
       values: { C: "", L: "Residential", N: "1000.00", P: "Awaiting Payment", S: "250.00", AA: "" } as Record<string, string>,
     }];
     computeMargins(updates, false);
-    assert.equal(updates[0].values.C, "N/A");
+    assert.equal(updates[0].values.C, "");
   });
 });

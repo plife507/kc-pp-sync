@@ -418,7 +418,7 @@ async function runSourceSheetFlow(config) {
         const totalInvoiced = parseFloat(totalInvoicedStr);
         if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
             for (const u of group)
-                u.values.C = "N/A";
+                u.values.C = "";
             continue;
         }
         // Sum Sub Invoice Amounts across all rows in this job group

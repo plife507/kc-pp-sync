@@ -470,7 +470,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
     const totalInvoiced = parseFloat(totalInvoicedStr);
 
     if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
-      for (const u of group) u.values.C = "N/A";
+      for (const u of group) u.values.C = "";
       continue;
     }
 
