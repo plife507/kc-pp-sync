@@ -1337,7 +1337,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         { rgb: [255, 167, 38], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] }, // 30-39% orange
         { rgb: [255, 112, 67], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }], dark: true }, // 20-29% dark orange
         { rgb: [239, 83, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true }, // 10-19% red-orange
-        { rgb: [198, 40, 40], type: "NUMBER_LESS", values: [{ userEnteredValue: "0.10" }], dark: true }, // <10% deep red
+        { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true }, // 0.1–9.9% deep red (excludes 0%)
     ];
     marginBands.forEach((band) => {
         formatRequests.push({
