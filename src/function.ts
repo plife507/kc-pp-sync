@@ -142,7 +142,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
   }
 
   // 4. Build per-row updates (auto columns only)
-  const updates: Array<{ rowIndex: number; values: Record<string, string>; _invoiceNumber?: string }> = [];
+  const updates: Array<{ rowIndex: number; values: Record<string, string>; _invoiceNumber?: string; _jobNumber?: string }> = [];
 
   // Parse target month from tab name for month-filtered WO assignment
   const tabMonth = parseTabMonth(config.sheets.sheetsTab);
@@ -408,7 +408,7 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
 
     // Track invoice number for shared invoice detection
     const resolvedInvNum = inv?.invoiceNumber ?? "";
-    updates.push({ rowIndex, values, _invoiceNumber: resolvedInvNum });
+    updates.push({ rowIndex, values, _invoiceNumber: resolvedInvNum, _jobNumber: jobNumber });
   }
 
   // 5a. Shared invoice detection — flag rows sharing the same Jobber invoice #
@@ -433,6 +433,84 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
       }
     }
     delete (u as any)._invoiceNumber;  // clean up temp field
+  }
+
+  // 5b. Margin % calculation (col C) — requires aggregation across rows with same Job#
+  const marginJobGroups = new Map<string, typeof updates>();
+  for (const u of updates) {
+    const jn = u._jobNumber;
+    if (!jn) continue;
+    const group = marginJobGroups.get(jn) ?? [];
+    group.push(u);
+    marginJobGroups.set(jn, group);
+  }
+
+  const subInvCol = useNewLayout ? "Q" : "S";
+  const autoNotesColMargin = useNewLayout ? "Y" : "AA";
+
+  for (const [, group] of marginJobGroups) {
+    // Check division — if any row is Hybrid, all get empty string
+    const division = group[0].values.L ?? "";
+    if (division === "Hybrid") {
+      for (const u of group) u.values.C = "";
+      continue;
+    }
+
+    // Payment gate: new layout checks All Paid (O) for ✅, legacy checks Invoice Status (P) for 'Paid'
+    let isPaid: boolean;
+    if (useNewLayout) {
+      isPaid = group[0].values.O === "✅";
+    } else {
+      // Legacy: check if any row has invoice status containing 'Paid'
+      isPaid = group.some(u => u.values.P?.toLowerCase() === "paid");
+    }
+
+    // Get Total Invoiced from col N (same for both layouts after shift)
+    const totalInvoicedStr = group[0].values.N ?? "";
+    const totalInvoiced = parseFloat(totalInvoicedStr);
+
+    if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
+      for (const u of group) u.values.C = "N/A";
+      continue;
+    }
+
+    // Sum Sub Invoice Amounts across all rows in this job group
+    let totalSubAmount = 0;
+    for (const u of group) {
+      const raw = u.values[subInvCol] ?? "";
+      const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+      if (!isNaN(parsed)) totalSubAmount += parsed;
+    }
+
+    // Edge case: no sub cost → 100% margin
+    if (totalSubAmount === 0) {
+      for (const u of group) u.values.C = "100.0%";
+      continue;
+    }
+
+    const margin = ((totalInvoiced - totalSubAmount) / totalInvoiced) * 100;
+    const marginStr = margin.toFixed(1) + "%";
+    for (const u of group) u.values.C = marginStr;
+
+    // Multi-contractor auto note (group size > 1)
+    if (group.length > 1) {
+      const subParts = group.map(u => {
+        const raw = u.values[subInvCol] ?? "0";
+        const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+        return "$" + (isNaN(parsed) ? "0.00" : parsed.toFixed(2));
+      });
+      const note = `📊 Job margin ${marginStr} — ${group.length} subs: ${subParts.join(" + ")} = $${totalSubAmount.toFixed(2)} / $${totalInvoiced.toFixed(2)}`;
+      for (const u of group) {
+        u.values[autoNotesColMargin] = u.values[autoNotesColMargin]
+          ? `${u.values[autoNotesColMargin]} | ${note}`
+          : note;
+      }
+    }
+  }
+
+  // Clean up temp _jobNumber field
+  for (const u of updates) {
+    delete u._jobNumber;
   }
 
   // 5. Batch update auto columns
