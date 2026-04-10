@@ -62,6 +62,7 @@ export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string):
  * Legacy/recurring link cols: F(5), H(7), K(10), U(20)
  */
 export declare function formatLinkColumns(spreadsheetId: string, tab: string, rowCount: number): Promise<void>;
+export declare function getSheetsClient(): Promise<import("googleapis").sheets_v4.Sheets>;
 export interface SyncLogEntry {
     timestamp: string;
     tab: string;

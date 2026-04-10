@@ -9,7 +9,7 @@ import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, getSheetsClient } from "./adapters/sheets.js";
 import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -505,6 +505,31 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
           ? `${u.values[autoNotesColMargin]} | ${note}`
           : note;
       }
+    }
+  }
+
+  // 5c. Compute average margin and write to header cell C1
+  {
+    const marginValues: number[] = [];
+    for (const u of updates) {
+      const raw = u.values.C;
+      if (raw && raw.endsWith("%")) {
+        const num = parseFloat(raw.replace("%", ""));
+        if (!isNaN(num)) marginValues.push(num);
+      }
+    }
+    const avgMargin = marginValues.length > 0
+      ? (marginValues.reduce((a, b) => a + b, 0) / marginValues.length).toFixed(1) + "%"
+      : "Margin %";
+    if (!config.sheets.dryRun) {
+      const sheetsClient = await getSheetsClient();
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: config.sheets.spreadsheetId,
+        range: `'${config.sheets.sheetsTab}'!C1`,
+        valueInputOption: "RAW",
+        requestBody: { values: [[avgMargin]] },
+      });
+      console.log(`  Margin avg: ${avgMargin} (${marginValues.length} jobs)`);
     }
   }
 

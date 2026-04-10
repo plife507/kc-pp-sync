@@ -347,7 +347,7 @@ export async function formatLinkColumns(
   });
 }
 
-async function getSheetsClient() {
+export async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
