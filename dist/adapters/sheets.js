@@ -814,6 +814,7 @@ export async function refreshDashboard(spreadsheetId) {
  *
  * Written to Dashboard starting at row 18.
  */
+/** Returns a map of month display name → total margin (0-1 decimal) for writing to C1 headers. */
 export async function refreshProfitabilityDashboard(spreadsheetId) {
     const sheets = await getSheetsClient();
     // 1. Get all sheet names + Dashboard sheetId
@@ -826,7 +827,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         .filter(Boolean);
     const dashSheet = meta.data.sheets?.find((s) => s.properties?.title === DASHBOARD_TAB);
     if (!dashSheet)
-        return;
+        return new Map();
     const dashboardSheetId = dashSheet.properties.sheetId;
     // 2. Auto-discover month tabs from spreadsheet (no hardcoded list)
     // Recurring tab naming: "Feb - R" (abbreviated), all others "{Month} - R"
@@ -1053,7 +1054,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         });
     }
     if (monthData.length === 0)
-        return;
+        return new Map();
     // 4. Build data rows
     //
     // Sequential grouping — each category shows revenue, labor, margin together:
@@ -1107,6 +1108,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         recurRev: 0, recurLab: 0, recurVisits: 0, recurInvoices: 0, recurExcl: 0,
         hybridRev: 0, hybridLab: 0, hybridJobs: 0,
     };
+    const marginByMonth = new Map();
     for (const m of monthData) {
         const oneOffMargin = m.oneOffRevenue > 0 ? (m.oneOffRevenue - m.oneOffLabor) / m.oneOffRevenue : 0;
         const recurMargin = m.recurringRevenue > 0 ? (m.recurringRevenue - m.recurringLabor) / m.recurringRevenue : 0;
@@ -1115,6 +1117,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         const totalLabor = m.oneOffLabor + m.recurringLabor;
         const grossProfit = totalRev - totalLabor;
         const totalMargin = totalRev > 0 ? grossProfit / totalRev : 0;
+        marginByMonth.set(m.month, totalMargin);
         dataRows.push([
             m.month,
             // One-off
@@ -1379,6 +1382,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         requestBody: { requests: formatRequests },
     });
     console.log(`  Profitability: ${monthData.length} months written to Dashboard (one-off/hybrid/recurring split)`);
+    return marginByMonth;
 }
 /**
  * Extend all conditional format rules on a tab so they cover up to maxRow rows.

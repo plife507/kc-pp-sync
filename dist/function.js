@@ -454,41 +454,8 @@ async function runSourceSheetFlow(config) {
             }
         }
     }
-    // 5c. Compute average margin and write to header cell C1
-    {
-        const marginValues = [];
-        for (const u of updates) {
-            const raw = u.values.C;
-            if (raw && raw.endsWith("%")) {
-                const num = parseFloat(raw.replace("%", ""));
-                if (!isNaN(num))
-                    marginValues.push(num);
-            }
-        }
-        if (!config.sheets.dryRun) {
-            const sheetsClient = await getSheetsClient();
-            if (marginValues.length > 0) {
-                const avg = marginValues.reduce((a, b) => a + b, 0) / marginValues.length;
-                const avgStr = avg.toFixed(1) + "%"; // USER_ENTERED interprets "61.8%" as 0.618 with PERCENT format
-                await sheetsClient.spreadsheets.values.update({
-                    spreadsheetId: config.sheets.spreadsheetId,
-                    range: `'${config.sheets.sheetsTab}'!C1`,
-                    valueInputOption: "USER_ENTERED",
-                    requestBody: { values: [[avgStr]] },
-                });
-                console.log(`  Margin avg: ${avgStr} (${marginValues.length} jobs)`);
-            }
-            else {
-                await sheetsClient.spreadsheets.values.update({
-                    spreadsheetId: config.sheets.spreadsheetId,
-                    range: `'${config.sheets.sheetsTab}'!C1`,
-                    valueInputOption: "RAW",
-                    requestBody: { values: [["Margin %"]] },
-                });
-                console.log(`  Margin avg: no paid margins`);
-            }
-        }
-    }
+    // 5c. C1 margin header is now written AFTER Dashboard refresh (uses Dashboard's weighted margin).
+    //     See the dashboardMarginMap handling below.
     // Clean up temp _jobNumber field
     for (const u of updates) {
         delete u._jobNumber;
@@ -989,12 +956,43 @@ export async function kcPPSync(req, res) {
                 console.warn(`  Dashboard refresh failed: ${e}`);
             }
             console.log("Refreshing Profitability section...");
+            let dashboardMarginMap;
             try {
-                await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
+                dashboardMarginMap = await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
                 console.log("  Profitability: done");
             }
             catch (e) {
                 console.warn(`  Profitability refresh failed: ${e}`);
+            }
+            // Write C1 margin header from Dashboard's weighted margin (matches Dashboard exactly)
+            if (!isRecurringTab && dashboardMarginMap) {
+                try {
+                    const sheetsClient = await getSheetsClient();
+                    const tabMonth = config.sheets.sheetsTab.replace(/ \d{4}$/, ""); // "March 2026" → "March"
+                    const margin = dashboardMarginMap.get(tabMonth);
+                    if (margin !== undefined && margin > 0) {
+                        const marginStr = (margin * 100).toFixed(1) + "%";
+                        await sheetsClient.spreadsheets.values.update({
+                            spreadsheetId: config.sheets.spreadsheetId,
+                            range: `'${config.sheets.sheetsTab}'!C1`,
+                            valueInputOption: "USER_ENTERED",
+                            requestBody: { values: [[marginStr]] },
+                        });
+                        console.log(`  C1 margin: ${marginStr} (from Dashboard weighted margin)`);
+                    }
+                    else {
+                        await sheetsClient.spreadsheets.values.update({
+                            spreadsheetId: config.sheets.spreadsheetId,
+                            range: `'${config.sheets.sheetsTab}'!C1`,
+                            valueInputOption: "RAW",
+                            requestBody: { values: [["Margin %"]] },
+                        });
+                        console.log(`  C1 margin: no data (${tabMonth} not in Dashboard)`);
+                    }
+                }
+                catch (e) {
+                    console.warn(`  C1 margin write failed: ${e}`);
+                }
             }
             // Set up margin column CF for one-off tabs only
             if (!isRecurringTab) {

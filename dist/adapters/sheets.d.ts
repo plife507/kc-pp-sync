@@ -120,7 +120,8 @@ export declare function refreshDashboard(spreadsheetId: string): Promise<number>
  *
  * Written to Dashboard starting at row 18.
  */
-export declare function refreshProfitabilityDashboard(spreadsheetId: string): Promise<void>;
+/** Returns a map of month display name → total margin (0-1 decimal) for writing to C1 headers. */
+export declare function refreshProfitabilityDashboard(spreadsheetId: string): Promise<Map<string, number>>;
 /**
  * Extend all conditional format rules on a tab so they cover up to maxRow rows.
  * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).

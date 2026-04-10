@@ -933,7 +933,8 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
  *
  * Written to Dashboard starting at row 18.
  */
-export async function refreshProfitabilityDashboard(spreadsheetId: string): Promise<void> {
+/** Returns a map of month display name → total margin (0-1 decimal) for writing to C1 headers. */
+export async function refreshProfitabilityDashboard(spreadsheetId: string): Promise<Map<string, number>> {
   const sheets = await getSheetsClient();
 
   // 1. Get all sheet names + Dashboard sheetId
@@ -946,7 +947,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     .filter(Boolean);
 
   const dashSheet = meta.data.sheets?.find((s: any) => s.properties?.title === DASHBOARD_TAB);
-  if (!dashSheet) return;
+  if (!dashSheet) return new Map();
   const dashboardSheetId = dashSheet.properties!.sheetId!;
 
   // 2. Auto-discover month tabs from spreadsheet (no hardcoded list)
@@ -1181,7 +1182,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     });
   }
 
-  if (monthData.length === 0) return;
+  if (monthData.length === 0) return new Map();
 
   // 4. Build data rows
   //
@@ -1238,6 +1239,8 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     hybridRev: 0, hybridLab: 0, hybridJobs: 0,
   };
 
+  const marginByMonth = new Map<string, number>();
+
   for (const m of monthData) {
     const oneOffMargin  = m.oneOffRevenue  > 0 ? (m.oneOffRevenue  - m.oneOffLabor)  / m.oneOffRevenue  : 0;
     const recurMargin   = m.recurringRevenue > 0 ? (m.recurringRevenue - m.recurringLabor) / m.recurringRevenue : 0;
@@ -1246,6 +1249,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     const totalLabor    = m.oneOffLabor   + m.recurringLabor;
     const grossProfit   = totalRev - totalLabor;
     const totalMargin   = totalRev > 0 ? grossProfit / totalRev : 0;
+    marginByMonth.set(m.month, totalMargin);
 
     dataRows.push([
       m.month,
@@ -1529,6 +1533,8 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
   });
 
   console.log(`  Profitability: ${monthData.length} months written to Dashboard (one-off/hybrid/recurring split)`);
+
+  return marginByMonth;
 }
 
 /**
