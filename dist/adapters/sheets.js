@@ -740,16 +740,16 @@ export async function refreshDashboard(spreadsheetId) {
     {
         const paidCfRange = { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 };
         const paidBands = [
-            { rgb: [56, 142, 60], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] },
-            { rgb: [76, 175, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] },
-            { rgb: [129, 199, 132], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] },
-            { rgb: [165, 214, 167], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] },
-            { rgb: [220, 231, 117], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] },
-            { rgb: [255, 235, 59], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] },
-            { rgb: [255, 167, 38], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] },
-            { rgb: [255, 112, 67], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }], dark: true },
-            { rgb: [239, 83, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true },
-            { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true },
+            { rgb: [56, 142, 60], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.90" }, { userEnteredValue: "100" }] },
+            { rgb: [76, 175, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.80" }, { userEnteredValue: "0.8999" }] },
+            { rgb: [129, 199, 132], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.70" }, { userEnteredValue: "0.7999" }] },
+            { rgb: [165, 214, 167], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.60" }, { userEnteredValue: "0.6999" }] },
+            { rgb: [220, 231, 117], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.50" }, { userEnteredValue: "0.5999" }] },
+            { rgb: [255, 235, 59], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.4999" }] },
+            { rgb: [255, 167, 38], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.30" }, { userEnteredValue: "0.3999" }] },
+            { rgb: [255, 112, 67], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.20" }, { userEnteredValue: "0.2999" }], dark: true },
+            { rgb: [239, 83, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.10" }, { userEnteredValue: "0.1999" }], dark: true },
+            { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.0999" }], dark: true },
         ];
         paidBands.forEach((band, idx) => {
             formatRequests.push({
@@ -1324,16 +1324,16 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         endColumnIndex: col + 1,
     }));
     const marginBands = [
-        { rgb: [56, 142, 60], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] }, // ≥90% deep green
-        { rgb: [76, 175, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] }, // 80-89% green
-        { rgb: [129, 199, 132], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] }, // 70-79% light green
-        { rgb: [165, 214, 167], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] }, // 60-69% pale green
-        { rgb: [220, 231, 117], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] }, // 50-59% yellow-green
-        { rgb: [255, 235, 59], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] }, // 40-49% yellow
-        { rgb: [255, 167, 38], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] }, // 30-39% orange
-        { rgb: [255, 112, 67], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }], dark: true }, // 20-29% dark orange
-        { rgb: [239, 83, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true }, // 10-19% red-orange
-        { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true }, // 0.1–9.9% deep red (excludes 0%)
+        { rgb: [56, 142, 60], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.90" }, { userEnteredValue: "100" }] },
+        { rgb: [76, 175, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.80" }, { userEnteredValue: "0.8999" }] },
+        { rgb: [129, 199, 132], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.70" }, { userEnteredValue: "0.7999" }] },
+        { rgb: [165, 214, 167], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.60" }, { userEnteredValue: "0.6999" }] },
+        { rgb: [220, 231, 117], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.50" }, { userEnteredValue: "0.5999" }] },
+        { rgb: [255, 235, 59], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.4999" }] },
+        { rgb: [255, 167, 38], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.30" }, { userEnteredValue: "0.3999" }] },
+        { rgb: [255, 112, 67], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.20" }, { userEnteredValue: "0.2999" }], dark: true },
+        { rgb: [239, 83, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.10" }, { userEnteredValue: "0.1999" }], dark: true },
+        { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.0999" }], dark: true },
     ];
     marginBands.forEach((band, idx) => {
         // Offset index by 10 because paidBands (10 rules) are added first in the same batch
@@ -1464,19 +1464,18 @@ export async function setupMarginCF(spreadsheetId, tabName) {
         startColumnIndex: 2,
         endColumnIndex: 3,
     };
-    // 10-band gradient: greens ≥60%, yellow-green 50s, yellow 40s, oranges 20-30s, reds <20%
-    // Rules evaluated top-down; first match wins. Order: highest threshold first.
+    // 10-band gradient using NUMBER_BETWEEN: each band matches exactly one range (no priority/ordering issues).
     const bands = [
-        { min: "0.90", rgb: [56, 142, 60], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] }, // ≥90% deep green
-        { min: "0.80", rgb: [76, 175, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] }, // 80-89% green
-        { min: "0.70", rgb: [129, 199, 132], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] }, // 70-79% light green
-        { min: "0.60", rgb: [165, 214, 167], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] }, // 60-69% pale green
-        { min: "0.50", rgb: [220, 231, 117], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] }, // 50-59% yellow-green
-        { min: "0.40", rgb: [255, 235, 59], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] }, // 40-49% yellow
-        { min: "0.30", rgb: [255, 167, 38], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] }, // 30-39% orange
-        { min: "0.20", rgb: [255, 112, 67], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }] }, // 20-29% dark orange
-        { min: "0.10", rgb: [239, 83, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }] }, // 10-19% red-orange
-        { min: "0", rgb: [198, 40, 40], type: "NUMBER_LESS", values: [{ userEnteredValue: "0.10" }] }, // <10% deep red (includes negatives)
+        { rgb: [56, 142, 60], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.90" }, { userEnteredValue: "100" }] }, // 90-100% deep green
+        { rgb: [76, 175, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.80" }, { userEnteredValue: "0.8999" }] }, // 80-89% green
+        { rgb: [129, 199, 132], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.70" }, { userEnteredValue: "0.7999" }] }, // 70-79% light green
+        { rgb: [165, 214, 167], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.60" }, { userEnteredValue: "0.6999" }] }, // 60-69% pale green
+        { rgb: [220, 231, 117], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.50" }, { userEnteredValue: "0.5999" }] }, // 50-59% yellow-green
+        { rgb: [255, 235, 59], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.4999" }] }, // 40-49% yellow
+        { rgb: [255, 167, 38], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.30" }, { userEnteredValue: "0.3999" }] }, // 30-39% orange
+        { rgb: [255, 112, 67], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.20" }, { userEnteredValue: "0.2999" }], dark: true }, // 20-29% dark orange
+        { rgb: [239, 83, 80], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.10" }, { userEnteredValue: "0.1999" }], dark: true }, // 10-19% red-orange
+        { rgb: [198, 40, 40], type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.0999" }], dark: true }, // 0.1-9.9% deep red (excludes 0%)
     ];
     bands.forEach((band, idx) => {
         requests.push({

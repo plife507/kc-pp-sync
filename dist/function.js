@@ -465,18 +465,28 @@ async function runSourceSheetFlow(config) {
                     marginValues.push(num);
             }
         }
-        const avgMargin = marginValues.length > 0
-            ? (marginValues.reduce((a, b) => a + b, 0) / marginValues.length).toFixed(1) + "%"
-            : "Margin %";
         if (!config.sheets.dryRun) {
             const sheetsClient = await getSheetsClient();
-            await sheetsClient.spreadsheets.values.update({
-                spreadsheetId: config.sheets.spreadsheetId,
-                range: `'${config.sheets.sheetsTab}'!C1`,
-                valueInputOption: "RAW",
-                requestBody: { values: [[avgMargin]] },
-            });
-            console.log(`  Margin avg: ${avgMargin} (${marginValues.length} jobs)`);
+            if (marginValues.length > 0) {
+                const avg = marginValues.reduce((a, b) => a + b, 0) / marginValues.length;
+                const avgStr = avg.toFixed(1) + "%"; // USER_ENTERED interprets "61.8%" as 0.618 with PERCENT format
+                await sheetsClient.spreadsheets.values.update({
+                    spreadsheetId: config.sheets.spreadsheetId,
+                    range: `'${config.sheets.sheetsTab}'!C1`,
+                    valueInputOption: "USER_ENTERED",
+                    requestBody: { values: [[avgStr]] },
+                });
+                console.log(`  Margin avg: ${avgStr} (${marginValues.length} jobs)`);
+            }
+            else {
+                await sheetsClient.spreadsheets.values.update({
+                    spreadsheetId: config.sheets.spreadsheetId,
+                    range: `'${config.sheets.sheetsTab}'!C1`,
+                    valueInputOption: "RAW",
+                    requestBody: { values: [["Margin %"]] },
+                });
+                console.log(`  Margin avg: no paid margins`);
+            }
         }
     }
     // Clean up temp _jobNumber field
