@@ -9,7 +9,7 @@ import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF } from "./adapters/sheets.js";
 import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -1050,6 +1050,15 @@ export async function kcPPSync(req: Request, res: Response): Promise<void> {
         console.log("  Profitability: done");
       } catch (e) {
         console.warn(`  Profitability refresh failed: ${e}`);
+      }
+
+      // Set up margin column CF for one-off tabs only
+      if (!isRecurringTab) {
+        try {
+          await setupMarginCF(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+        } catch (e) {
+          console.warn(`  Margin CF setup failed: ${e}`);
+        }
       }
     }
 

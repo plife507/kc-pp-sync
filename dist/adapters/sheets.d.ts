@@ -125,4 +125,10 @@ export declare function refreshProfitabilityDashboard(spreadsheetId: string): Pr
  * Useful when a tab grows beyond the original CF range (e.g., March hits row 201+).
  */
 export declare function extendTabCF(spreadsheetId: string, tabName: string, maxRow?: number): Promise<number>;
+/**
+ * Set up conditional formatting on column C (Margin %) for a one-off tab.
+ * Removes any existing CF rules that target column C only, then adds three
+ * color-band rules: green ≥65%, yellow 40–65%, red <40%.
+ */
+export declare function setupMarginCF(spreadsheetId: string, tabName: string): Promise<void>;
 export declare function renameTab(spreadsheetId: string, from: string, to: string): Promise<void>;

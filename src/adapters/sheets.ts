@@ -1582,6 +1582,111 @@ export async function extendTabCF(spreadsheetId: string, tabName: string, maxRow
   return requests.length;
 }
 
+/**
+ * Set up conditional formatting on column C (Margin %) for a one-off tab.
+ * Removes any existing CF rules that target column C only, then adds three
+ * color-band rules: green ≥65%, yellow 40–65%, red <40%.
+ */
+export async function setupMarginCF(spreadsheetId: string, tabName: string): Promise<void> {
+  const sheets = await getSheetsClient();
+
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties,conditionalFormats)",
+  });
+
+  const sheet = meta.data.sheets?.find((s: any) => s.properties?.title === tabName);
+  if (!sheet) throw new Error(`Tab "${tabName}" not found`);
+
+  const sheetId = sheet.properties!.sheetId!;
+  const cf: any[] = sheet.conditionalFormats || [];
+
+  // Find existing rules that target ONLY column C (startColumnIndex=2, endColumnIndex=3)
+  const toDelete: number[] = [];
+  for (let i = cf.length - 1; i >= 0; i--) {
+    const ranges = cf[i].ranges || [];
+    const onlyColC = ranges.length > 0 && ranges.every(
+      (r: any) => r.sheetId === sheetId && r.startColumnIndex === 2 && r.endColumnIndex === 3
+    );
+    if (onlyColC) toDelete.push(i);
+  }
+
+  const requests: any[] = [];
+
+  // Delete in reverse index order so indices stay valid
+  for (const idx of toDelete) {
+    requests.push({ deleteConditionalFormatRule: { sheetId, index: idx } });
+  }
+
+  const baseRange = {
+    sheetId,
+    startRowIndex: 1,   // row 2 (0-based)
+    endRowIndex: 500,
+    startColumnIndex: 2,
+    endColumnIndex: 3,
+  };
+
+  // Green: >= 0.65
+  requests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: [baseRange],
+        booleanRule: {
+          condition: {
+            type: "NUMBER_GREATER_THAN_EQ",
+            values: [{ userEnteredValue: "0.65" }],
+          },
+          format: {
+            backgroundColor: { red: 183 / 255, green: 225 / 255, blue: 205 / 255 },
+          },
+        },
+      },
+      index: 0,
+    },
+  });
+
+  // Yellow: >= 0.40 and < 0.65
+  requests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: [baseRange],
+        booleanRule: {
+          condition: {
+            type: "NUMBER_BETWEEN",
+            values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.65" }],
+          },
+          format: {
+            backgroundColor: { red: 255 / 255, green: 235 / 255, blue: 156 / 255 },
+          },
+        },
+      },
+      index: 1,
+    },
+  });
+
+  // Red: < 0.40
+  requests.push({
+    addConditionalFormatRule: {
+      rule: {
+        ranges: [baseRange],
+        booleanRule: {
+          condition: {
+            type: "NUMBER_LESS_THAN",
+            values: [{ userEnteredValue: "0.40" }],
+          },
+          format: {
+            backgroundColor: { red: 244 / 255, green: 199 / 255, blue: 195 / 255 },
+          },
+        },
+      },
+      index: 2,
+    },
+  });
+
+  await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+  console.log(`  setupMarginCF: ${toDelete.length} old rules removed, 3 new rules added on "${tabName}" col C`);
+}
+
 export async function renameTab(spreadsheetId: string, from: string, to: string): Promise<void> {
   const sheets = await getSheetsClient();
   const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets(properties(sheetId,title))" });

@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -960,6 +960,15 @@ export async function kcPPSync(req, res) {
             }
             catch (e) {
                 console.warn(`  Profitability refresh failed: ${e}`);
+            }
+            // Set up margin column CF for one-off tabs only
+            if (!isRecurringTab) {
+                try {
+                    await setupMarginCF(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+                }
+                catch (e) {
+                    console.warn(`  Margin CF setup failed: ${e}`);
+                }
             }
         }
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
