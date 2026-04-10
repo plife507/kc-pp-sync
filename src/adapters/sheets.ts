@@ -1671,7 +1671,7 @@ export async function setupMarginCF(spreadsheetId: string, tabName: string): Pro
         ranges: [baseRange],
         booleanRule: {
           condition: {
-            type: "NUMBER_LESS_THAN",
+            type: "NUMBER_LESS",
             values: [{ userEnteredValue: "0.40" }],
           },
           format: {
