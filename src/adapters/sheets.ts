@@ -1464,40 +1464,47 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     });
   }
 
-  // Conditional formatting on Total Margin % col (S, index 18): green ≥65%, yellow 40–65%, red <40%
-  const cfRange = [{ sheetId: dashboardSheetId, startRowIndex: tableDataStart0, endRowIndex: ytdRowIndex0 + 1, startColumnIndex: 18, endColumnIndex: 19 }];
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: cfRange,
-        booleanRule: {
-          condition: { type: "NUMBER_LESS", values: [{ userEnteredValue: "0.4" }] },
-          format: { backgroundColor: { red: 255 / 255, green: 199 / 255, blue: 206 / 255 } },
+  // 10-band gradient conditional formatting on margin % columns:
+  //   D (One-off, index 3), I (Recurring, index 8), S (Total, index 18)
+  // Same palette as setupMarginCF on monthly tabs.
+  const marginCfRanges = [3, 8, 18].map(col => ({
+    sheetId: dashboardSheetId,
+    startRowIndex: tableDataStart0,
+    endRowIndex: ytdRowIndex0 + 1,
+    startColumnIndex: col,
+    endColumnIndex: col + 1,
+  }));
+  const marginBands: Array<{ rgb: [number, number, number]; type: string; values: Array<{ userEnteredValue: string }>; dark?: boolean }> = [
+    { rgb: [56, 142, 60],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] },           // ≥90% deep green
+    { rgb: [76, 175, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] },           // 80-89% green
+    { rgb: [129, 199, 132],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] },           // 70-79% light green
+    { rgb: [165, 214, 167],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] },           // 60-69% pale green
+    { rgb: [220, 231, 117],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] },           // 50-59% yellow-green
+    { rgb: [255, 235, 59],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] },           // 40-49% yellow
+    { rgb: [255, 167, 38],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] },           // 30-39% orange
+    { rgb: [255, 112, 67],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }], dark: true }, // 20-29% dark orange
+    { rgb: [239, 83, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true }, // 10-19% red-orange
+    { rgb: [198, 40, 40],    type: "NUMBER_LESS",            values: [{ userEnteredValue: "0.10" }], dark: true }, // <10% deep red
+  ];
+  marginBands.forEach((band) => {
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: marginCfRanges,
+          booleanRule: {
+            condition: { type: band.type, values: band.values },
+            format: {
+              backgroundColor: {
+                red: band.rgb[0] / 255,
+                green: band.rgb[1] / 255,
+                blue: band.rgb[2] / 255,
+              },
+              ...(band.dark ? { textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 } } } : {}),
+            },
+          },
         },
       },
-    },
-  });
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: cfRange,
-        booleanRule: {
-          condition: { type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.4" }, { userEnteredValue: "0.6499" }] },
-          format: { backgroundColor: { red: 255 / 255, green: 235 / 255, blue: 156 / 255 } },
-        },
-      },
-    },
-  });
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: cfRange,
-        booleanRule: {
-          condition: { type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.65" }] },
-          format: { backgroundColor: { red: 198 / 255, green: 239 / 255, blue: 206 / 255 } },
-        },
-      },
-    },
+    });
   });
 
   // Column widths: A=120, B–M=130
