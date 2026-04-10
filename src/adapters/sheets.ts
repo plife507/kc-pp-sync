@@ -851,44 +851,39 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     });
   }
 
-  // Conditional formatting on % Paid column (col E, index 4): red <50%, yellow 50-79%, green ≥80%
-  // (All stale CF rules were already nuked above in step 6b — safe to just add fresh rules here.)
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
-        booleanRule: {
-          condition: { type: "NUMBER_LESS", values: [{ userEnteredValue: "0.5" }] },
-          format: { backgroundColor: { red: 234/255, green: 153/255, blue: 153/255 } },
+  // 10-band gradient conditional formatting on % Paid column (col E, index 4)
+  // Same palette as setupMarginCF on monthly tabs. Excludes 0% from red band.
+  {
+    const paidCfRange = { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 };
+    const paidBands: Array<{ rgb: [number, number, number]; type: string; values: Array<{ userEnteredValue: string }>; dark?: boolean }> = [
+      { rgb: [56, 142, 60],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] },
+      { rgb: [76, 175, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] },
+      { rgb: [129, 199, 132],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] },
+      { rgb: [165, 214, 167],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] },
+      { rgb: [220, 231, 117],  type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] },
+      { rgb: [255, 235, 59],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] },
+      { rgb: [255, 167, 38],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] },
+      { rgb: [255, 112, 67],   type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }], dark: true },
+      { rgb: [239, 83, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true },
+      { rgb: [198, 40, 40],    type: "NUMBER_BETWEEN",          values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true },
+    ];
+    paidBands.forEach((band) => {
+      formatRequests.push({
+        addConditionalFormatRule: {
+          rule: {
+            ranges: [paidCfRange],
+            booleanRule: {
+              condition: { type: band.type, values: band.values },
+              format: {
+                backgroundColor: { red: band.rgb[0] / 255, green: band.rgb[1] / 255, blue: band.rgb[2] / 255 },
+                ...(band.dark ? { textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 } } } : {}),
+              },
+            },
+          },
         },
-      },
-      index: 0,
-    },
-  });
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
-        booleanRule: {
-          condition: { type: "NUMBER_BETWEEN", values: [{ userEnteredValue: "0.5" }, { userEnteredValue: "0.7999" }] },
-          format: { backgroundColor: { red: 255/255, green: 229/255, blue: 153/255 } },
-        },
-      },
-      index: 1,
-    },
-  });
-  formatRequests.push({
-    addConditionalFormatRule: {
-      rule: {
-        ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 4, endColumnIndex: 5 }],
-        booleanRule: {
-          condition: { type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.8" }] },
-          format: { backgroundColor: { red: 147/255, green: 196/255, blue: 125/255 } },
-        },
-      },
-      index: 2,
-    },
-  });
+      });
+    });
+  }
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
