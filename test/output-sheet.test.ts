@@ -3,42 +3,46 @@ import assert from "node:assert/strict";
 import { AUTO_COL_LETTERS_LEGACY, AUTO_COL_LETTERS_NEW } from "../src/adapters/sheets.js";
 
 describe("AUTO_COL_LETTERS_LEGACY", () => {
-  it("contains E,G,H,I,J,K,L,M,N,O,P,Q,R,T,Z", () => {
-    for (const col of ["E", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "T", "Z"]) {
+  it("contains shifted auto columns: F,H,I,J,K,L,M,N,O,P,Q,R,S,U,AA", () => {
+    for (const col of ["F", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "U", "AA"]) {
       assert.ok(AUTO_COL_LETTERS_LEGACY.has(col), `expected ${col} to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
-  it("does not contain F (job number is manual)", () => {
-    assert.equal(AUTO_COL_LETTERS_LEGACY.has("F"), false);
+  it("does not contain G (job number is manual — was F before margin insert)", () => {
+    assert.equal(AUTO_COL_LETTERS_LEGACY.has("G"), false);
   });
 
-  it("contains A,C,D (heypros date + contractor fields — now auto)", () => {
-    for (const col of ["A", "C", "D"]) {
+  it("contains A,C,D,E (date + margin + contractor fields — auto)", () => {
+    for (const col of ["A", "C", "D", "E"]) {
       assert.ok(AUTO_COL_LETTERS_LEGACY.has(col), `expected ${col} to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
-  it("does not contain B,F,S,U,V,W,X,Y (manual columns)", () => {
-    for (const col of ["B", "F", "S", "U", "V", "W", "X", "Y"]) {
+  it("does not contain B,G,T,V,W,X,Y,Z (manual columns)", () => {
+    for (const col of ["B", "G", "T", "V", "W", "X", "Y", "Z"]) {
       assert.equal(AUTO_COL_LETTERS_LEGACY.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS_LEGACY`);
     }
   });
 
-  it("has exactly 18 auto columns", () => {
-    assert.equal(AUTO_COL_LETTERS_LEGACY.size, 18);
+  it("has exactly 19 auto columns", () => {
+    assert.equal(AUTO_COL_LETTERS_LEGACY.size, 19);
   });
 });
 
 describe("AUTO_COL_LETTERS_NEW", () => {
-  it("contains new layout auto columns including tracker block", () => {
-    for (const col of ["A", "C", "D", "E", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "R", "X"]) {
+  it("contains shifted auto columns including tracker block", () => {
+    for (const col of ["A", "C", "D", "E", "F", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "S", "Y"]) {
       assert.ok(AUTO_COL_LETTERS_NEW.has(col), `expected ${col} to be in AUTO_COL_LETTERS_NEW`);
+    }
+    // Tracker slots Z-AN
+    for (const col of ["Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ", "AK", "AL", "AM", "AN"]) {
+      assert.ok(AUTO_COL_LETTERS_NEW.has(col), `expected tracker col ${col} to be in AUTO_COL_LETTERS_NEW`);
     }
   });
 
-  it("does not contain new manual columns B,F,Q,S,T,U,V,W", () => {
-    for (const col of ["B", "F", "Q", "S", "T", "U", "V", "W"]) {
+  it("does not contain new manual columns B,G,R,T,U,V,W,X", () => {
+    for (const col of ["B", "G", "R", "T", "U", "V", "W", "X"]) {
       assert.equal(AUTO_COL_LETTERS_NEW.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS_NEW`);
     }
   });
@@ -56,7 +60,7 @@ describe("batchUpdateAutoColumns range format", () => {
     const tab = "Sheet1";
     const update = {
       rowIndex: 3,
-      values: { E: "hp-id", G: "jobber-link", T: "https://example.com/file.pdf" } as Record<string, string>,
+      values: { F: "hp-id", H: "jobber-link", U: "https://example.com/file.pdf" } as Record<string, string>,
     };
 
     const refs: string[] = [];
@@ -66,14 +70,14 @@ describe("batchUpdateAutoColumns range format", () => {
       }
     }
 
-    assert.deepEqual(refs, ["Sheet1!E3", "Sheet1!G3", "Sheet1!T3"]);
+    assert.deepEqual(refs, ["Sheet1!F3", "Sheet1!H3", "Sheet1!U3"]);
   });
 
   it("skips non-auto columns in values", () => {
     const tab = "Sheet1";
     const update = {
       rowIndex: 2,
-      values: { E: "hp-id", F: "should-be-ignored", G: "Client" } as Record<string, string>,
+      values: { E: "hp-id", G: "should-be-ignored", H: "Client" } as Record<string, string>,
     };
 
     const refs: string[] = [];
@@ -83,8 +87,8 @@ describe("batchUpdateAutoColumns range format", () => {
       }
     }
 
-    // F should be excluded
-    assert.deepEqual(refs, ["Sheet1!E2", "Sheet1!G2"]);
+    // G (Job#) should be excluded — manual column
+    assert.deepEqual(refs, ["Sheet1!E2", "Sheet1!H2"]);
   });
 });
 
@@ -476,5 +480,184 @@ describe("parseTabMonth", () => {
       return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
     });
     assert.equal(filtered.length, 1);
+  });
+});
+
+describe("Margin % calculation (col C)", () => {
+  /**
+   * Replicates the margin second-pass logic from function.ts.
+   * Takes updates with _jobNumber, useNewLayout flag, and computes margin on values.C.
+   */
+  function computeMargins(
+    updates: Array<{ rowIndex: number; values: Record<string, string>; _jobNumber: string }>,
+    useNewLayout: boolean,
+  ) {
+    const marginJobGroups = new Map<string, typeof updates>();
+    for (const u of updates) {
+      const jn = u._jobNumber;
+      if (!jn) continue;
+      const group = marginJobGroups.get(jn) ?? [];
+      group.push(u);
+      marginJobGroups.set(jn, group);
+    }
+
+    const subInvCol = useNewLayout ? "Q" : "S";
+    const autoNotesCol = useNewLayout ? "Y" : "AA";
+
+    for (const [, group] of marginJobGroups) {
+      const division = group[0].values.L ?? "";
+      if (division === "Hybrid") {
+        for (const u of group) u.values.C = "";
+        continue;
+      }
+
+      let isPaid: boolean;
+      if (useNewLayout) {
+        isPaid = group[0].values.O === "✅";
+      } else {
+        isPaid = group.some(u => u.values.P?.toLowerCase() === "paid");
+      }
+
+      const totalInvoicedStr = group[0].values.N ?? "";
+      const totalInvoiced = parseFloat(totalInvoicedStr);
+
+      if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
+        for (const u of group) u.values.C = "N/A";
+        continue;
+      }
+
+      let totalSubAmount = 0;
+      for (const u of group) {
+        const raw = u.values[subInvCol] ?? "";
+        const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+        if (!isNaN(parsed)) totalSubAmount += parsed;
+      }
+
+      if (totalSubAmount === 0) {
+        for (const u of group) u.values.C = "100.0%";
+        continue;
+      }
+
+      const margin = ((totalInvoiced - totalSubAmount) / totalInvoiced) * 100;
+      const marginStr = margin.toFixed(1) + "%";
+      for (const u of group) u.values.C = marginStr;
+
+      if (group.length > 1) {
+        const subParts = group.map(u => {
+          const raw = u.values[subInvCol] ?? "0";
+          const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+          return "$" + (isNaN(parsed) ? "0.00" : parsed.toFixed(2));
+        });
+        const note = `📊 Job margin ${marginStr} — ${group.length} subs: ${subParts.join(" + ")} = $${totalSubAmount.toFixed(2)} / $${totalInvoiced.toFixed(2)}`;
+        for (const u of group) {
+          u.values[autoNotesCol] = u.values[autoNotesCol]
+            ? `${u.values[autoNotesCol]} | ${note}`
+            : note;
+        }
+      }
+    }
+  }
+
+  it("single contractor paid → correct margin (70.0%)", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "100",
+      values: { C: "", L: "Residential", N: "1000.00", O: "✅", Q: "300.00", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "70.0%");
+  });
+
+  it("single contractor unpaid → N/A", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "100",
+      values: { C: "", L: "Residential", N: "1000.00", O: "❌", Q: "300.00", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "N/A");
+  });
+
+  it("multi-contractor (2 rows same job#) → same margin on both + auto note", () => {
+    const updates = [
+      {
+        rowIndex: 2,
+        _jobNumber: "200",
+        values: { C: "", L: "Commercial", N: "2000.00", O: "✅", Q: "400.00", Y: "" } as Record<string, string>,
+      },
+      {
+        rowIndex: 3,
+        _jobNumber: "200",
+        values: { C: "", L: "Commercial", N: "2000.00", O: "✅", Q: "600.00", Y: "" } as Record<string, string>,
+      },
+    ];
+    computeMargins(updates, true);
+    // Total sub = 400 + 600 = 1000, margin = (2000-1000)/2000 = 50%
+    assert.equal(updates[0].values.C, "50.0%");
+    assert.equal(updates[1].values.C, "50.0%");
+    // Both should have margin auto note
+    assert.ok(updates[0].values.Y.includes("📊 Job margin 50.0%"));
+    assert.ok(updates[0].values.Y.includes("2 subs"));
+    assert.ok(updates[1].values.Y.includes("📊 Job margin 50.0%"));
+  });
+
+  it("Hybrid division → empty string", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "300",
+      values: { C: "", L: "Hybrid", N: "1000.00", O: "✅", Q: "300.00", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "");
+  });
+
+  it("Total Invoiced = 0 → N/A", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "400",
+      values: { C: "", L: "Residential", N: "0", O: "✅", Q: "300.00", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "N/A");
+  });
+
+  it("Sub Invoice Amount = 0 → 100.0%", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "500",
+      values: { C: "", L: "Residential", N: "1000.00", O: "✅", Q: "", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "100.0%");
+  });
+
+  it("negative margin (sub exceeds invoiced) → shows negative", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "600",
+      values: { C: "", L: "Residential", N: "500.00", O: "✅", Q: "800.00", Y: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, true);
+    assert.equal(updates[0].values.C, "-60.0%");
+  });
+
+  it("legacy layout: paid invoice status → correct margin", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "700",
+      values: { C: "", L: "Residential", N: "1000.00", P: "Paid", S: "250.00", AA: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, false);
+    assert.equal(updates[0].values.C, "75.0%");
+  });
+
+  it("legacy layout: unpaid invoice status → N/A", () => {
+    const updates = [{
+      rowIndex: 2,
+      _jobNumber: "800",
+      values: { C: "", L: "Residential", N: "1000.00", P: "Awaiting Payment", S: "250.00", AA: "" } as Record<string, string>,
+    }];
+    computeMargins(updates, false);
+    assert.equal(updates[0].values.C, "N/A");
   });
 });

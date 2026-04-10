@@ -8,10 +8,10 @@ export async function readOutputSheetJobNumbers(spreadsheetId, tab = "Sheet1") {
     const sheets = await getSheetsClient();
     const useNew = isNewLayout(tab);
     if (useNew) {
-        // New layout: just read column F (Job #)
+        // New layout: just read column G (Job #)
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${tab}'!F2:F500`,
+            range: `'${tab}'!G2:G500`,
         });
         const rows = res.data.values ?? [];
         const result = [];
@@ -23,10 +23,10 @@ export async function readOutputSheetJobNumbers(spreadsheetId, tab = "Sheet1") {
         return result;
     }
     else {
-        // Legacy layout: read F through L (F=Job#, L=Invoice#) for manual hold ("-")
+        // Legacy layout: read G through M (G=Job#, M=Invoice#) for manual hold ("-")
         const res = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `'${tab}'!F2:L500`,
+            range: `'${tab}'!G2:M500`,
         });
         const rows = res.data.values ?? [];
         const result = [];
@@ -40,25 +40,25 @@ export async function readOutputSheetJobNumbers(spreadsheetId, tab = "Sheet1") {
     }
 }
 /**
- * NEW layout (March-forward): auto-populated columns in A–AM layout.
- * Manual/finance columns NOT in this set: B (review), F (job#), Q (KCPC Released),
- * S (Payment Status), T (Payment Tracking), U (Payment Method), V (Date of Payment), W (Notes).
+ * NEW layout (March-forward): auto-populated columns in A–AN layout.
+ * Manual/finance columns NOT in this set: B (review), G (job#), R (KCPC Released),
+ * T (Payment Status), U (Payment Tracking), V (Payment Method), W (Date of Payment), X (Notes).
  */
 export const AUTO_COL_LETTERS_NEW = new Set([
-    "A", "C", "D", "E", "G", "H", "I", "J", "K",
-    "L", "M", "N", // invoice summary (new)
-    "O", "P", "R", // HeyPros invoice #, Sub Inv Amt, Contractor PDF
-    "X", // auto notes (was Z)
-    "Y", "Z", "AA", // tracker slot 1
-    "AB", "AC", "AD", // tracker slot 2
-    "AE", "AF", "AG", // tracker slot 3
-    "AH", "AI", "AJ", // tracker slot 4
-    "AK", "AL", "AM", // tracker slot 5
+    "A", "C", "D", "E", "F", "H", "I", "J", "K", "L",
+    "M", "N", "O", // invoice summary
+    "P", "Q", "S", // HeyPros invoice #, Sub Inv Amt, Contractor PDF
+    "Y", // auto notes
+    "Z", "AA", "AB", // tracker slot 1
+    "AC", "AD", "AE", // tracker slot 2
+    "AF", "AG", "AH", // tracker slot 3
+    "AI", "AJ", "AK", // tracker slot 4
+    "AL", "AM", "AN", // tracker slot 5
 ]);
 /**
  * LEGACY layout (Jan/Feb): auto-populated columns in A–Z layout.
  */
-export const AUTO_COL_LETTERS_LEGACY = new Set(["A", "C", "D", "E", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "T", "Z"]);
+export const AUTO_COL_LETTERS_LEGACY = new Set(["A", "C", "D", "E", "F", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "U", "AA"]);
 // For recurring tabs: A (Date), L (Invoice #), S (KCPC Released Amount) are manual
 export const RECURRING_AUTO_COL_LETTERS = new Set(["A", "C", "D", "E", "G", "H", "I", "J", "K", "M", "N", "O", "P", "Q", "R", "T", "Z"]);
 /** Determine if a tab uses the new 39-column layout (March-forward) or legacy 26-column. */
@@ -168,16 +168,16 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
     // --- Helper: extract GTP-eligible rows from a tab ---
     function extractGtpRows(rows, layoutNew) {
         const COL_DATE = 0;
-        const COL_COMPANY = 2;
-        const COL_PP_OWNER = 3;
-        const COL_JOB_NUM = 5;
-        const COL_CLIENT_NAME = 9;
-        // New layout: N=13 (All Paid?), P=15 (Sub Inv Amt), S=18 (Payment Status), T=19 (Payment Tracking)
-        // Legacy:     O=14 (Invoice Status), R=17 (Sub Inv Amt), U=20 (Payment Status), V=21 (Payment Tracking)
-        const COL_PAID_CHECK = layoutNew ? 13 : 14;
-        const COL_SUB_AMOUNT = layoutNew ? 15 : 17;
-        const COL_PAYMENT_STATUS = layoutNew ? 18 : 20;
-        const COL_PAYMENT_TRACKING = layoutNew ? 19 : 21;
+        const COL_COMPANY = 3;
+        const COL_PP_OWNER = 4;
+        const COL_JOB_NUM = 6;
+        const COL_CLIENT_NAME = 10;
+        // New layout: O=14 (All Paid?), Q=16 (Sub Inv Amt), T=19 (Payment Status), U=20 (Payment Tracking)
+        // Legacy:     P=15 (Invoice Status), S=18 (Sub Inv Amt), V=21 (Payment Status), W=22 (Payment Tracking)
+        const COL_PAID_CHECK = layoutNew ? 14 : 15;
+        const COL_SUB_AMOUNT = layoutNew ? 16 : 18;
+        const COL_PAYMENT_STATUS = layoutNew ? 19 : 21;
+        const COL_PAYMENT_TRACKING = layoutNew ? 20 : 22;
         const paidValue = layoutNew ? "✅" : "Paid";
         const result = [];
         for (const row of rows) {
@@ -203,7 +203,7 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
         return result;
     }
     // --- Read main month tab ---
-    const readRange = useNew ? `'${sourceTab}'!A2:T500` : `'${sourceTab}'!A2:V500`;
+    const readRange = useNew ? `'${sourceTab}'!A2:U500` : `'${sourceTab}'!A2:W500`;
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: readRange,
@@ -264,8 +264,8 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
  * Apply black text formatting to hyperlink columns so links render as
  * black underlined text instead of default Google blue.
  *
- * New layout link cols: E(4), G(6), J(9), R(17)
- * Legacy/recurring link cols: E(4), G(6), J(9), T(19)
+ * New layout link cols: F(5), H(7), K(10), S(18)
+ * Legacy/recurring link cols: F(5), H(7), K(10), U(20)
  */
 export async function formatLinkColumns(spreadsheetId, tab, rowCount) {
     const sheets = await getSheetsClient();
@@ -279,8 +279,8 @@ export async function formatLinkColumns(spreadsheetId, tab, rowCount) {
         return;
     const sheetId = sheet.properties.sheetId;
     const useNew = isNewLayout(tab);
-    // PDF column: R(17) on new layout, T(19) on legacy/recurring
-    const linkCols = useNew ? [4, 6, 9, 17] : [4, 6, 9, 19];
+    // PDF column: S(18) on new layout, U(20) on legacy/recurring
+    const linkCols = useNew ? [5, 7, 10, 18] : [5, 7, 10, 20];
     const requests = linkCols.map((col) => ({
         repeatCell: {
             range: {
@@ -393,12 +393,12 @@ function getDashboardColIndices(tabName) {
     const isRecurring = tabName.endsWith(" - R");
     if (isRecurring || !isNewLayout(tabName)) {
         // Legacy (Jan/Feb with or without year suffix) and recurring tabs
-        // V (index 21) = Payment Tracking
-        return { paymentStatus: 20, paymentTracking: 21, subInvoiceAmount: 17, allPaid: 14 };
+        // W (index 22) = Payment Tracking
+        return { paymentStatus: 21, paymentTracking: 22, subInvoiceAmount: 18, allPaid: 15 };
     }
     // New layout (March+)
-    // T (index 19) = Payment Tracking
-    return { paymentStatus: 18, paymentTracking: 19, subInvoiceAmount: 15, allPaid: 13 };
+    // U (index 20) = Payment Tracking
+    return { paymentStatus: 19, paymentTracking: 20, subInvoiceAmount: 16, allPaid: 14 };
 }
 /**
  * Extract month name from a tab name.
@@ -488,8 +488,8 @@ export async function refreshDashboard(spreadsheetId) {
         }
         const stats = statsByMonth.get(monthName);
         for (const row of rows) {
-            // Skip rows with blank Job # (col F, index 5)
-            const jobNum = (row[5] ?? "").toString().trim();
+            // Skip rows with blank Job # (col G, index 6)
+            const jobNum = (row[6] ?? "").toString().trim();
             if (!jobNum)
                 continue;
             const paymentStatus = (row[cols.paymentStatus] ?? "").toString().trim();
@@ -887,31 +887,31 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         if (hasOneOff) {
             try {
                 const range = m.type === "legacy"
-                    ? `'${m.oneOffTab}'!A2:U500`
-                    : `'${m.oneOffTab}'!A2:S500`;
+                    ? `'${m.oneOffTab}'!A2:V500`
+                    : `'${m.oneOffTab}'!A2:T500`;
                 const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
                 const rows = (res.data.values ?? []);
                 if (m.type === "legacy") {
                     // Legacy layout (Jan/Feb):
-                    //   F=Job#(5), K=Division(10), L=Invoice#(11), M=TotalInvoiced(12),
-                    //   O=InvoiceStatus(14), R=SubInvAmt(17), U=PaymentStatus(20)
-                    // Invoice gate: col L must be a real invoice number (not blank, not "-")
-                    // Revenue gate: InvoiceStatus(O) = "Paid"
+                    //   G=Job#(6), L=Division(11), M=Invoice#(12), N=TotalInvoiced(13),
+                    //   P=InvoiceStatus(15), S=SubInvAmt(18), V=PaymentStatus(21)
+                    // Invoice gate: col M must be a real invoice number (not blank, not "-")
+                    // Revenue gate: InvoiceStatus(P) = "Paid"
                     // Dedup revenue by Invoice #
                     const seenInvoices = new Set();
                     for (const row of rows) {
-                        const jobNum = (row[5] ?? "").toString().trim();
+                        const jobNum = (row[6] ?? "").toString().trim();
                         if (!jobNum)
                             continue;
-                        const invoiceNum = (row[11] ?? "").toString().trim();
+                        const invoiceNum = (row[12] ?? "").toString().trim();
                         // Invoice gate: skip uninvoiced rows — division not yet finalised
                         if (!invoiceNum || invoiceNum === "-")
                             continue;
-                        const division = (row[10] ?? "").toString().trim();
-                        const invTotal = (row[12] ?? "").toString().trim();
-                        const invStatus = (row[14] ?? "").toString().trim();
-                        const labor = parseDollarAmount((row[17] ?? "").toString());
-                        const payStatus = (row[20] ?? "").toString().trim();
+                        const division = (row[11] ?? "").toString().trim();
+                        const invTotal = (row[13] ?? "").toString().trim();
+                        const invStatus = (row[15] ?? "").toString().trim();
+                        const labor = parseDollarAmount((row[18] ?? "").toString());
+                        const payStatus = (row[21] ?? "").toString().trim();
                         // Skip "No payment" rows (sub never gets paid, not a real job)
                         if (payStatus.toLowerCase().startsWith("no payment"))
                             continue;
@@ -944,25 +944,25 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                 }
                 else {
                     // New layout (March+):
-                    //   F=Job#(5), K=Division(10), L=#Invoices(11), M=TotalInvoiced(12),
-                    //   N=AllPaid?(13), P=SubInvAmt(15), S=PaymentStatus(18)
-                    // Invoice gate: col L (# of Invoices) must be > 0 — skips jobs not yet invoiced
-                    // Revenue gate: All Paid?(N) = "✅"
+                    //   G=Job#(6), L=Division(11), M=#Invoices(12), N=TotalInvoiced(13),
+                    //   O=AllPaid?(14), Q=SubInvAmt(16), T=PaymentStatus(19)
+                    // Invoice gate: col M (# of Invoices) must be > 0 — skips jobs not yet invoiced
+                    // Revenue gate: All Paid?(O) = "✅"
                     // Dedup revenue by Job #
                     const seenJobsForRevenue = new Set();
                     for (const row of rows) {
-                        const jobNum = (row[5] ?? "").toString().trim();
+                        const jobNum = (row[6] ?? "").toString().trim();
                         if (!jobNum)
                             continue;
-                        const numInvoices = parseInt((row[11] ?? "0").toString().trim(), 10) || 0;
+                        const numInvoices = parseInt((row[12] ?? "0").toString().trim(), 10) || 0;
                         // Invoice gate: skip uninvoiced rows — division not yet finalised
                         if (numInvoices === 0)
                             continue;
-                        const division = (row[10] ?? "").toString().trim();
-                        const invTotal = (row[12] ?? "").toString().trim();
-                        const allPaid = (row[13] ?? "").toString().trim();
-                        const labor = parseDollarAmount((row[15] ?? "").toString());
-                        const payStatus = (row[18] ?? "").toString().trim();
+                        const division = (row[11] ?? "").toString().trim();
+                        const invTotal = (row[13] ?? "").toString().trim();
+                        const allPaid = (row[14] ?? "").toString().trim();
+                        const labor = parseDollarAmount((row[16] ?? "").toString());
+                        const payStatus = (row[19] ?? "").toString().trim();
                         // Skip "No payment" rows
                         if (payStatus.toLowerCase().startsWith("no payment"))
                             continue;
@@ -1422,6 +1422,99 @@ export async function extendTabCF(spreadsheetId, tabName, maxRow = 500) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
     console.log(`  extendTabCF: extended ${requests.length} CF rules on "${tabName}" to row ${maxRow}`);
     return requests.length;
+}
+/**
+ * Set up conditional formatting on column C (Margin %) for a one-off tab.
+ * Removes any existing CF rules that target column C only, then adds three
+ * color-band rules: green ≥65%, yellow 40–65%, red <40%.
+ */
+export async function setupMarginCF(spreadsheetId, tabName) {
+    const sheets = await getSheetsClient();
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets(properties,conditionalFormats)",
+    });
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+    if (!sheet)
+        throw new Error(`Tab "${tabName}" not found`);
+    const sheetId = sheet.properties.sheetId;
+    const cf = sheet.conditionalFormats || [];
+    // Find existing rules that target ONLY column C (startColumnIndex=2, endColumnIndex=3)
+    const toDelete = [];
+    for (let i = cf.length - 1; i >= 0; i--) {
+        const ranges = cf[i].ranges || [];
+        const onlyColC = ranges.length > 0 && ranges.every((r) => r.sheetId === sheetId && r.startColumnIndex === 2 && r.endColumnIndex === 3);
+        if (onlyColC)
+            toDelete.push(i);
+    }
+    const requests = [];
+    // Delete in reverse index order so indices stay valid
+    for (const idx of toDelete) {
+        requests.push({ deleteConditionalFormatRule: { sheetId, index: idx } });
+    }
+    const baseRange = {
+        sheetId,
+        startRowIndex: 1, // row 2 (0-based)
+        endRowIndex: 500,
+        startColumnIndex: 2,
+        endColumnIndex: 3,
+    };
+    // Green: >= 0.65
+    requests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [baseRange],
+                booleanRule: {
+                    condition: {
+                        type: "NUMBER_GREATER_THAN_EQ",
+                        values: [{ userEnteredValue: "0.65" }],
+                    },
+                    format: {
+                        backgroundColor: { red: 183 / 255, green: 225 / 255, blue: 205 / 255 },
+                    },
+                },
+            },
+            index: 0,
+        },
+    });
+    // Yellow: >= 0.40 and < 0.65
+    requests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [baseRange],
+                booleanRule: {
+                    condition: {
+                        type: "NUMBER_BETWEEN",
+                        values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.65" }],
+                    },
+                    format: {
+                        backgroundColor: { red: 255 / 255, green: 235 / 255, blue: 156 / 255 },
+                    },
+                },
+            },
+            index: 1,
+        },
+    });
+    // Red: < 0.40
+    requests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [baseRange],
+                booleanRule: {
+                    condition: {
+                        type: "NUMBER_LESS",
+                        values: [{ userEnteredValue: "0.40" }],
+                    },
+                    format: {
+                        backgroundColor: { red: 244 / 255, green: 199 / 255, blue: 195 / 255 },
+                    },
+                },
+            },
+            index: 2,
+        },
+    });
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    console.log(`  setupMarginCF: ${toDelete.length} old rules removed, 3 new rules added on "${tabName}" col C`);
 }
 export async function renameTab(spreadsheetId, from, to) {
     const sheets = await getSheetsClient();

@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -175,21 +175,22 @@ async function runSourceSheetFlow(config) {
         const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
         // Legacy layout manual hold: check if Invoice # column has "-" in the sheet
         const isManualInvoiceHold = !useNewLayout && existingInvoiceValue === "-";
-        // Common fields (same columns in both layouts: A–K)
+        // Common fields (same columns in both layouts: A–L)
         const values = {
             A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
-            C: contractor?.companyName ?? "",
-            D: contractor ? `${contractor.firstName} ${contractor.lastName}`.trim() : "",
-            E: heyPros?.hashid && hpHashidNumeric
+            C: "", // Margin % placeholder (filled in Phase 3)
+            D: contractor?.companyName ?? "",
+            E: contractor ? `${contractor.firstName} ${contractor.lastName}`.trim() : "",
+            F: heyPros?.hashid && hpHashidNumeric
                 ? `=HYPERLINK("https://kc-power-clean.heypros.com/job/${heyPros.hashid}","${formatHeyProsId(hpHashidNumeric)}")`
                 : formatHeyProsId(hpHashidNumeric),
-            G: inv?.jobberWebUri ? `=HYPERLINK("${inv.jobberWebUri}","View Job")` : "",
-            H: inv?.jobStatus ? displayJobStatus(inv.jobStatus) : "",
-            I: inv?.jobType ? displayJobType(inv.jobType) : "",
-            J: inv?.clientWebUri && inv.clientName
+            H: inv?.jobberWebUri ? `=HYPERLINK("${inv.jobberWebUri}","View Job")` : "",
+            I: inv?.jobStatus ? displayJobStatus(inv.jobStatus) : "",
+            J: inv?.jobType ? displayJobType(inv.jobType) : "",
+            K: inv?.clientWebUri && inv.clientName
                 ? `=HYPERLINK("${inv.clientWebUri}","${(inv.clientName ?? "").replace(/"/g, '""')}")`
                 : inv?.clientName ?? "",
-            K: inv?.division ?? "",
+            L: inv?.division ?? "",
         };
         if (useNewLayout) {
             // ──────── NEW LAYOUT (March+): A–AM ────────
@@ -203,27 +204,27 @@ async function runSourceSheetFlow(config) {
                 }
             }
             const invoiceList = [...uniqueInvoices.values()];
-            values.L = invoiceList.length > 0 ? String(invoiceList.length) : "0";
-            values.M = invoiceList.length > 0
+            values.M = invoiceList.length > 0 ? String(invoiceList.length) : "0";
+            values.N = invoiceList.length > 0
                 ? invoiceList.reduce((sum, j) => sum + j.amount, 0).toFixed(2)
                 : "";
             const allPaid = invoiceList.length > 0 && invoiceList.every(j => j.invoiceStatus === "paid");
-            values.N = invoiceList.length === 0 ? "" : (allPaid ? "✅" : "❌");
-            // O = HeyPros Invoice # (was Q)
-            values.O = formatHeyProsId(hpInvoiceHashidNumeric);
-            // P = Sub Invoice Amount (was R)
-            values.P = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
-            // R = Contractor Invoice PDF (was T)
-            values.R = acceptedInvoices.length === 0 ? ""
+            values.O = invoiceList.length === 0 ? "" : (allPaid ? "✅" : "❌");
+            // P = HeyPros Invoice #
+            values.P = formatHeyProsId(hpInvoiceHashidNumeric);
+            // Q = Sub Invoice Amount
+            values.Q = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
+            // S = Contractor Invoice PDF
+            values.S = acceptedInvoices.length === 0 ? ""
                 : isMultiInvoice ? "See Auto Note"
                     : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '';
-            // Invoice Tracker Block (Y–AM): 5 slots × 3 cols
+            // Invoice Tracker Block (Z–AN): 5 slots × 3 cols
             const trackerCols = [
-                ["Y", "Z", "AA"], // slot 1
-                ["AB", "AC", "AD"], // slot 2
-                ["AE", "AF", "AG"], // slot 3
-                ["AH", "AI", "AJ"], // slot 4
-                ["AK", "AL", "AM"], // slot 5
+                ["Z", "AA", "AB"], // slot 1
+                ["AC", "AD", "AE"], // slot 2
+                ["AF", "AG", "AH"], // slot 3
+                ["AI", "AJ", "AK"], // slot 4
+                ["AL", "AM", "AN"], // slot 5
             ];
             // Sort invoices by invoice number ascending (slot 1 = first/oldest)
             const sortedJobberInvoices = invoiceList.slice().sort((a, b) => {
@@ -247,30 +248,30 @@ async function runSourceSheetFlow(config) {
                     values[colPaid] = "";
                 }
             }
-            // X = Auto Notes (was Z)
-            values.X = "";
+            // Y = Auto Notes
+            values.Y = "";
         }
         else {
-            // ──────── LEGACY LAYOUT (Jan/Feb): A–Z ────────
-            values.Q = formatHeyProsId(hpInvoiceHashidNumeric);
-            values.R = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
-            values.T = acceptedInvoices.length === 0 ? ""
+            // ──────── LEGACY LAYOUT (Jan/Feb): A–AA ────────
+            values.R = formatHeyProsId(hpInvoiceHashidNumeric);
+            values.S = acceptedInvoices.length === 0 ? "" : (isMultiInvoice ? totalAmountDollars.toFixed(2) : hpInvoiceAmountDollars);
+            values.U = acceptedInvoices.length === 0 ? ""
                 : isMultiInvoice ? "See Auto Note"
                     : hpPdfUrl ? '=HYPERLINK("' + hpPdfUrl + '","View PDF")' : '';
-            values.Z = "";
-            // Only populate invoice columns (L, M, N, O, P) when NOT in manual hold mode
+            values.AA = "";
+            // Only populate invoice columns (M, N, O, P, Q) when NOT in manual hold mode
             if (!isManualInvoiceHold) {
-                values.L = inv?.invoiceWebUri && inv.invoiceNumber
+                values.M = inv?.invoiceWebUri && inv.invoiceNumber
                     ? `=HYPERLINK("${inv.invoiceWebUri}","${inv.invoiceNumber}")`
                     : inv?.invoiceNumber ?? "";
-                values.M = inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "";
-                values.N = inv?.issuedDate ? formatDate(inv.issuedDate) : "";
-                values.O = inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
-                values.P = inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
+                values.N = inv ? (inv.amount === 0 ? "" : String(inv.amount)) : "";
+                values.O = inv?.issuedDate ? formatDate(inv.issuedDate) : "";
+                values.P = inv?.invoiceStatus ? displayInvoiceStatus(inv.invoiceStatus) : "";
+                values.Q = inv?.invoiceStatus === "paid" && inv.paidDate ? formatDate(inv.paidDate) : "";
             }
         }
-        // Auto notes column: X for new layout, Z for legacy
-        const autoNotesCol = useNewLayout ? "X" : "Z";
+        // Auto notes column: Y for new layout, AA for legacy
+        const autoNotesCol = useNewLayout ? "Y" : "AA";
         const plainParts = []; // for plain text auto-notes
         // Condition 1: multi-accepted (2+ accepted invoices)
         if (isMultiInvoice) {
@@ -340,25 +341,25 @@ async function runSourceSheetFlow(config) {
         // columns that Nathan manually enters for pre-HeyPros jobs.
         if (heyProsList.length === 0) {
             delete values.A;
-            delete values.C;
             delete values.D;
             delete values.E;
+            delete values.F;
             if (useNewLayout) {
-                // New layout: O (HP Invoice #), P (Sub Inv Amt), R (Contractor PDF)
-                delete values.O;
+                // New layout: P (HP Invoice #), Q (Sub Inv Amt), S (Contractor PDF)
                 delete values.P;
-                delete values.R;
+                delete values.Q;
+                delete values.S;
             }
             else {
-                // Legacy layout: Q (HP Invoice #), R (Sub Inv Amt), T (Contractor PDF)
-                delete values.Q;
+                // Legacy layout: R (HP Invoice #), S (Sub Inv Amt), U (Contractor PDF)
                 delete values.R;
-                delete values.T;
+                delete values.S;
+                delete values.U;
             }
         }
         // Track invoice number for shared invoice detection
         const resolvedInvNum = inv?.invoiceNumber ?? "";
-        updates.push({ rowIndex, values, _invoiceNumber: resolvedInvNum });
+        updates.push({ rowIndex, values, _invoiceNumber: resolvedInvNum, _jobNumber: jobNumber });
     }
     // 5a. Shared invoice detection — flag rows sharing the same Jobber invoice #
     const invoiceRowMap = new Map();
@@ -370,7 +371,7 @@ async function runSourceSheetFlow(config) {
             invoiceRowMap.set(invNum, existing);
         }
     }
-    const notesCol = useNewLayout ? "X" : "Z";
+    const notesCol = useNewLayout ? "Y" : "AA";
     for (const u of updates) {
         const invNum = u._invoiceNumber;
         if (invNum && invNum !== "-") {
@@ -382,6 +383,80 @@ async function runSourceSheetFlow(config) {
             }
         }
         delete u._invoiceNumber; // clean up temp field
+    }
+    // 5b. Margin % calculation (col C) — requires aggregation across rows with same Job#
+    const marginJobGroups = new Map();
+    for (const u of updates) {
+        const jn = u._jobNumber;
+        if (!jn)
+            continue;
+        const group = marginJobGroups.get(jn) ?? [];
+        group.push(u);
+        marginJobGroups.set(jn, group);
+    }
+    const subInvCol = useNewLayout ? "Q" : "S";
+    const autoNotesColMargin = useNewLayout ? "Y" : "AA";
+    for (const [, group] of marginJobGroups) {
+        // Check division — if any row is Hybrid, all get empty string
+        const division = group[0].values.L ?? "";
+        if (division === "Hybrid") {
+            for (const u of group)
+                u.values.C = "";
+            continue;
+        }
+        // Payment gate: new layout checks All Paid (O) for ✅, legacy checks Invoice Status (P) for 'Paid'
+        let isPaid;
+        if (useNewLayout) {
+            isPaid = group[0].values.O === "✅";
+        }
+        else {
+            // Legacy: check if any row has invoice status containing 'Paid'
+            isPaid = group.some(u => u.values.P?.toLowerCase() === "paid");
+        }
+        // Get Total Invoiced from col N (same for both layouts after shift)
+        const totalInvoicedStr = group[0].values.N ?? "";
+        const totalInvoiced = parseFloat(totalInvoicedStr);
+        if (!isPaid || !totalInvoiced || isNaN(totalInvoiced) || totalInvoiced === 0) {
+            for (const u of group)
+                u.values.C = "N/A";
+            continue;
+        }
+        // Sum Sub Invoice Amounts across all rows in this job group
+        let totalSubAmount = 0;
+        for (const u of group) {
+            const raw = u.values[subInvCol] ?? "";
+            const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+            if (!isNaN(parsed))
+                totalSubAmount += parsed;
+        }
+        // Edge case: no sub cost → 100% margin
+        if (totalSubAmount === 0) {
+            for (const u of group)
+                u.values.C = "100.0%";
+            continue;
+        }
+        const margin = ((totalInvoiced - totalSubAmount) / totalInvoiced) * 100;
+        const marginStr = margin.toFixed(1) + "%";
+        for (const u of group)
+            u.values.C = marginStr;
+        // Multi-contractor auto note (group size > 1)
+        if (group.length > 1) {
+            const subParts = group.map(u => {
+                const raw = u.values[subInvCol] ?? "0";
+                const parsed = parseFloat(raw.replace(/[$,]/g, ""));
+                return "$" + (isNaN(parsed) ? "0.00" : parsed.toFixed(2));
+            });
+            const note = `📊 Job margin ${marginStr} — ${group.length} subs: ${subParts.join(" + ")} = $${totalSubAmount.toFixed(2)} / $${totalInvoiced.toFixed(2)}`;
+            for (const u of group) {
+                u.values[autoNotesColMargin] = u.values[autoNotesColMargin]
+                    ? `${u.values[autoNotesColMargin]} | ${note}`
+                    : note;
+            }
+        }
+    }
+    // Clean up temp _jobNumber field
+    for (const u of updates) {
+        delete u._jobNumber;
     }
     // 5. Batch update auto columns
     if (config.sheets.dryRun) {
@@ -687,7 +762,7 @@ export async function kcPPSync(req, res) {
             return;
         }
         // Handle addMismatchCF: add row-highlight for "client paid but still NO CLIENT PAY" rows
-        // Formula: =AND($N2="✅", $S2="NO CLIENT PAY") — orange highlight across entire row
+        // Formula: =AND($O2="✅", $T2="NO CLIENT PAY") — orange highlight across entire row
         // Col N = All Paid? (index 13), Col S = Payment Status (index 18)
         // Applies to all new-layout month tabs (not recurring, not GTP)
         if (req.body?.addMismatchCF) {
@@ -714,9 +789,9 @@ export async function kcPPSync(req, res) {
                         requests: [{
                                 addConditionalFormatRule: {
                                     rule: {
-                                        ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 0, endColumnIndex: 39 }],
+                                        ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 0, endColumnIndex: 40 }],
                                         booleanRule: {
-                                            condition: { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: '=AND($N2="✅",$S2="NO CLIENT PAY")' }] },
+                                            condition: { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: '=AND($O2="✅",$T2="NO CLIENT PAY")' }] },
                                             format: { backgroundColor: { red: 1, green: 0.749, blue: 0.424 } }, // orange amber
                                         },
                                     },
@@ -788,7 +863,7 @@ export async function kcPPSync(req, res) {
         // Handle debugCF request: dump CF rules covering a specific column on a tab
         if (req.body?.debugCF) {
             const tabName = req.body.debugCF;
-            const targetCol = req.body.col ?? 18; // default col S (0-indexed)
+            const targetCol = req.body.col ?? 19; // default col T (0-indexed) — Payment Status in new layout
             const { google } = await import("googleapis");
             const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
             const sheets = google.sheets({ version: "v4", auth: gauth });
@@ -885,6 +960,15 @@ export async function kcPPSync(req, res) {
             }
             catch (e) {
                 console.warn(`  Profitability refresh failed: ${e}`);
+            }
+            // Set up margin column CF for one-off tabs only
+            if (!isRecurringTab) {
+                try {
+                    await setupMarginCF(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+                }
+                catch (e) {
+                    console.warn(`  Margin CF setup failed: ${e}`);
+                }
             }
         }
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
