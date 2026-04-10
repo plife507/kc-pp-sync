@@ -661,3 +661,49 @@ describe("Margin % calculation (col C)", () => {
     assert.equal(updates[0].values.C, "");
   });
 });
+
+// --- parsePurchaseOrder tests ---
+
+import { parsePurchaseOrder } from "../src/adapters/heypros.js";
+
+describe("parsePurchaseOrder", () => {
+  it("single job number passthrough", () => {
+    assert.deepEqual(parsePurchaseOrder("19633"), ["19633"]);
+  });
+
+  it("space-separated dual job numbers", () => {
+    assert.deepEqual(parsePurchaseOrder("19616 19659"), ["19616", "19659"]);
+  });
+
+  it("another space-separated pair", () => {
+    assert.deepEqual(parsePurchaseOrder("19693 19694"), ["19693", "19694"]);
+  });
+
+  it("slash-separated relative shorthand", () => {
+    assert.deepEqual(parsePurchaseOrder("19353 / 54"), ["19353", "19354"]);
+  });
+
+  it("Job # prefix (single)", () => {
+    assert.deepEqual(parsePurchaseOrder("Job #19553"), ["19553"]);
+  });
+
+  it("Job # prefix with extra space", () => {
+    assert.deepEqual(parsePurchaseOrder("Job # 19551"), ["19551"]);
+  });
+
+  it("null/undefined/empty returns empty array", () => {
+    assert.deepEqual(parsePurchaseOrder(null), []);
+    assert.deepEqual(parsePurchaseOrder(undefined), []);
+    assert.deepEqual(parsePurchaseOrder(""), []);
+    assert.deepEqual(parsePurchaseOrder("  "), []);
+  });
+
+  it("comma-separated", () => {
+    assert.deepEqual(parsePurchaseOrder("19616,19659"), ["19616", "19659"]);
+  });
+
+  it("linked job description (real production data)", () => {
+    // PO="19653 19639" from HP:E20Q6k
+    assert.deepEqual(parsePurchaseOrder("19653 19639"), ["19653", "19639"]);
+  });
+});

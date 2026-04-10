@@ -279,6 +279,52 @@ interface JobsByPOItem {
   }>;
 }
 
+// --- Purchase Order Parsing ---
+
+/**
+ * Parse a HeyPros purchaseOrder field into individual job numbers.
+ * Handles formats seen in production:
+ *   "19616 19659"       → ["19616", "19659"]
+ *   "19693 19694"       → ["19693", "19694"]
+ *   "19353 / 54"        → ["19353", "19354"]  (relative shorthand)
+ *   "Job #19553"        → ["19553"]
+ *   "19633"             → ["19633"]
+ */
+export function parsePurchaseOrder(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  let cleaned = raw.trim();
+  if (!cleaned) return [];
+
+  // Strip "Job #", "Job#", "#" prefixes
+  cleaned = cleaned.replace(/Job\s*#\s*/gi, "");
+
+  // Split on whitespace, commas, slashes, "and"
+  const tokens = cleaned.split(/[\s,/]+|\band\b/i).map(t => t.trim()).filter(Boolean);
+
+  const result: string[] = [];
+  let lastFull = "";
+
+  for (const token of tokens) {
+    // Skip non-numeric tokens (e.g. stray words from job names)
+    if (!/^\d+$/.test(token)) continue;
+
+    if (token.length >= 4) {
+      // Full job number (e.g. "19616")
+      result.push(token);
+      lastFull = token;
+    } else if (lastFull) {
+      // Relative shorthand (e.g. "54" after "19353" → "19354")
+      const prefix = lastFull.slice(0, lastFull.length - token.length);
+      result.push(prefix + token);
+    } else {
+      // Short number with no preceding full number — use as-is
+      result.push(token);
+    }
+  }
+
+  return result;
+}
+
 // --- Public API ---
 
 export async function fetchJobsByPurchaseOrders(
@@ -308,7 +354,10 @@ export async function fetchJobsByPurchaseOrders(
 
     for (const item of data.jobsDashboard.items) {
       const po = item.purchaseOrder?.trim();
-      if (po && poSet.has(po)) {
+      if (!po) continue;
+
+      // Try exact match first (fast path for 99% of WOs)
+      if (poSet.has(po)) {
         matched.push({
           hashid: item.hashid,
           hashidNumeric: item.hashidNumeric,
@@ -318,6 +367,21 @@ export async function fetchJobsByPurchaseOrders(
           ostensibleWinnerUser: item.ostensibleWinner?.user ?? null,
           jobInvoices: item.jobInvoices,
         });
+      } else {
+        // Multi-PO or prefixed format — parse and check each number
+        const parsed = parsePurchaseOrder(po);
+        const anyMatch = parsed.some(n => poSet.has(n));
+        if (anyMatch) {
+          matched.push({
+            hashid: item.hashid,
+            hashidNumeric: item.hashidNumeric,
+            purchaseOrder: item.purchaseOrder,
+            installationStarts: item.installationStarts ?? null,
+            attachedContractors: item.attachedContractors ?? [],
+            ostensibleWinnerUser: item.ostensibleWinner?.user ?? null,
+            jobInvoices: item.jobInvoices,
+          });
+        }
       }
     }
 

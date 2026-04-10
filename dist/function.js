@@ -5,7 +5,7 @@
  * Option C: Read job numbers from output sheet, then look up in Jobber + HeyPros.
  */
 import { loadConfig, resolveMode } from "./config/env.js";
-import { fetchJobsByPurchaseOrders } from "./adapters/heypros.js";
+import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
 import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, getSheetsClient } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
@@ -106,10 +106,15 @@ async function runSourceSheetFlow(config) {
     const heyProsByPO = new Map();
     for (const hp of heyProsJobs) {
         const po = hp.purchaseOrder?.trim();
-        if (po) {
-            const existing = heyProsByPO.get(po) ?? [];
+        if (!po)
+            continue;
+        // Parse multi-value PO into individual job numbers
+        const parsed = parsePurchaseOrder(po);
+        const keys = parsed.length > 0 ? parsed : [po];
+        for (const jobNum of keys) {
+            const existing = heyProsByPO.get(jobNum) ?? [];
             existing.push(hp);
-            heyProsByPO.set(po, existing);
+            heyProsByPO.set(jobNum, existing);
         }
     }
     // Sort each PO's HeyPros cards by installationStarts ascending (oldest first)
@@ -511,10 +516,15 @@ async function runRecurringTabFlow(config) {
     const heyProsByPO = new Map();
     for (const hp of heyProsJobs) {
         const po = hp.purchaseOrder?.trim();
-        if (po) {
-            const existing = heyProsByPO.get(po) ?? [];
+        if (!po)
+            continue;
+        // Parse multi-value PO into individual job numbers
+        const parsed = parsePurchaseOrder(po);
+        const keys = parsed.length > 0 ? parsed : [po];
+        for (const jobNum of keys) {
+            const existing = heyProsByPO.get(jobNum) ?? [];
             existing.push(hp);
-            heyProsByPO.set(po, existing);
+            heyProsByPO.set(jobNum, existing);
         }
     }
     // Parse target month from tab name (strip " - R" suffix first)
