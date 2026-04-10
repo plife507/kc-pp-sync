@@ -498,9 +498,20 @@ function getDashboardColIndices(tabName: string): {
  * Extract month name from a tab name.
  * "March" → "March", "January 2026" → "January", "April - R" → "April"
  */
+/**
+ * Extract canonical month name from a tab name.
+ * "March" → "March", "January 2026" → "January", "April - R" → "April"
+ * "Feb - R" → "February" (handles abbreviated month names)
+ */
 function extractMonthName(tabName: string): string {
   const base = tabName.replace(/ - R$/, "").replace(/\s+\d{4}$/, "").trim();
-  return base;
+  // Handle abbreviated month names (e.g. "Feb" → "February", "Jan" → "January")
+  const ABBREV_MAP: Record<string, string> = {
+    "Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April",
+    "Jun": "June", "Jul": "July", "Aug": "August", "Sep": "September",
+    "Oct": "October", "Nov": "November", "Dec": "December",
+  };
+  return ABBREV_MAP[base] ?? base;
 }
 
 /**

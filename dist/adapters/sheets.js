@@ -404,9 +404,20 @@ function getDashboardColIndices(tabName) {
  * Extract month name from a tab name.
  * "March" → "March", "January 2026" → "January", "April - R" → "April"
  */
+/**
+ * Extract canonical month name from a tab name.
+ * "March" → "March", "January 2026" → "January", "April - R" → "April"
+ * "Feb - R" → "February" (handles abbreviated month names)
+ */
 function extractMonthName(tabName) {
     const base = tabName.replace(/ - R$/, "").replace(/\s+\d{4}$/, "").trim();
-    return base;
+    // Handle abbreviated month names (e.g. "Feb" → "February", "Jan" → "January")
+    const ABBREV_MAP = {
+        "Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April",
+        "Jun": "June", "Jul": "July", "Aug": "August", "Sep": "September",
+        "Oct": "October", "Nov": "November", "Dec": "December",
+    };
+    return ABBREV_MAP[base] ?? base;
 }
 /**
  * Parse a dollar amount string from the sheet.
