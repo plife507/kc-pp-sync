@@ -1459,62 +1459,44 @@ export async function setupMarginCF(spreadsheetId, tabName) {
         startColumnIndex: 2,
         endColumnIndex: 3,
     };
-    // Green: >= 0.65
-    requests.push({
-        addConditionalFormatRule: {
-            rule: {
-                ranges: [baseRange],
-                booleanRule: {
-                    condition: {
-                        type: "NUMBER_GREATER_THAN_EQ",
-                        values: [{ userEnteredValue: "0.65" }],
-                    },
-                    format: {
-                        backgroundColor: { red: 183 / 255, green: 225 / 255, blue: 205 / 255 },
-                    },
-                },
-            },
-            index: 0,
-        },
-    });
-    // Yellow: >= 0.40 and < 0.65
-    requests.push({
-        addConditionalFormatRule: {
-            rule: {
-                ranges: [baseRange],
-                booleanRule: {
-                    condition: {
-                        type: "NUMBER_BETWEEN",
-                        values: [{ userEnteredValue: "0.40" }, { userEnteredValue: "0.65" }],
-                    },
-                    format: {
-                        backgroundColor: { red: 255 / 255, green: 235 / 255, blue: 156 / 255 },
-                    },
-                },
-            },
-            index: 1,
-        },
-    });
-    // Red: < 0.40
-    requests.push({
-        addConditionalFormatRule: {
-            rule: {
-                ranges: [baseRange],
-                booleanRule: {
-                    condition: {
-                        type: "NUMBER_LESS",
-                        values: [{ userEnteredValue: "0.40" }],
-                    },
-                    format: {
-                        backgroundColor: { red: 244 / 255, green: 199 / 255, blue: 195 / 255 },
+    // 10-band gradient: greens ≥60%, yellow-green 50s, yellow 40s, oranges 20-30s, reds <20%
+    // Rules evaluated top-down; first match wins. Order: highest threshold first.
+    const bands = [
+        { min: "0.90", rgb: [56, 142, 60], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.90" }] }, // ≥90% deep green
+        { min: "0.80", rgb: [76, 175, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.80" }] }, // 80-89% green
+        { min: "0.70", rgb: [129, 199, 132], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.70" }] }, // 70-79% light green
+        { min: "0.60", rgb: [165, 214, 167], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.60" }] }, // 60-69% pale green
+        { min: "0.50", rgb: [220, 231, 117], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.50" }] }, // 50-59% yellow-green
+        { min: "0.40", rgb: [255, 235, 59], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.40" }] }, // 40-49% yellow
+        { min: "0.30", rgb: [255, 167, 38], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.30" }] }, // 30-39% orange
+        { min: "0.20", rgb: [255, 112, 67], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.20" }] }, // 20-29% dark orange
+        { min: "0.10", rgb: [239, 83, 80], type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }] }, // 10-19% red-orange
+        { min: "0", rgb: [198, 40, 40], type: "NUMBER_LESS", values: [{ userEnteredValue: "0.10" }] }, // <10% deep red (includes negatives)
+    ];
+    bands.forEach((band, idx) => {
+        requests.push({
+            addConditionalFormatRule: {
+                rule: {
+                    ranges: [baseRange],
+                    booleanRule: {
+                        condition: { type: band.type, values: band.values },
+                        format: {
+                            backgroundColor: {
+                                red: band.rgb[0] / 255,
+                                green: band.rgb[1] / 255,
+                                blue: band.rgb[2] / 255,
+                            },
+                            // White text on dark backgrounds for readability
+                            ...(idx >= 7 ? { textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 } } } : {}),
+                        },
                     },
                 },
+                index: idx,
             },
-            index: 2,
-        },
+        });
     });
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
-    console.log(`  setupMarginCF: ${toDelete.length} old rules removed, 3 new rules added on "${tabName}" col C`);
+    console.log(`  setupMarginCF: ${toDelete.length} old rules removed, ${bands.length} gradient rules added on "${tabName}" col C`);
 }
 export async function renameTab(spreadsheetId, from, to) {
     const sheets = await getSheetsClient();

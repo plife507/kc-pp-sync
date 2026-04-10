@@ -534,7 +534,7 @@ describe("Margin % calculation (col C)", () => {
       }
 
       if (totalSubAmount === 0) {
-        for (const u of group) u.values.C = "100.0%";
+        for (const u of group) u.values.C = "";
         continue;
       }
 
@@ -621,14 +621,14 @@ describe("Margin % calculation (col C)", () => {
     assert.equal(updates[0].values.C, "N/A");
   });
 
-  it("Sub Invoice Amount = 0 → 100.0%", () => {
+  it("Sub Invoice Amount = 0 → blank (no sub invoice data)", () => {
     const updates = [{
       rowIndex: 2,
       _jobNumber: "500",
       values: { C: "", L: "Residential", N: "1000.00", O: "✅", Q: "", Y: "" } as Record<string, string>,
     }];
     computeMargins(updates, true);
-    assert.equal(updates[0].values.C, "100.0%");
+    assert.equal(updates[0].values.C, "");
   });
 
   it("negative margin (sub exceeds invoiced) → shows negative", () => {

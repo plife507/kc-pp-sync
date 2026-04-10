@@ -429,10 +429,10 @@ async function runSourceSheetFlow(config) {
             if (!isNaN(parsed))
                 totalSubAmount += parsed;
         }
-        // Edge case: no sub cost → 100% margin
+        // Edge case: no sub cost → can't calculate margin (no sub invoice data)
         if (totalSubAmount === 0) {
             for (const u of group)
-                u.values.C = "100.0%";
+                u.values.C = "";
             continue;
         }
         const margin = ((totalInvoiced - totalSubAmount) / totalInvoiced) * 100;
