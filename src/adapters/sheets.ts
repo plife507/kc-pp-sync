@@ -867,7 +867,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       { rgb: [239, 83, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true },
       { rgb: [198, 40, 40],    type: "NUMBER_BETWEEN",          values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true },
     ];
-    paidBands.forEach((band) => {
+    paidBands.forEach((band, idx) => {
       formatRequests.push({
         addConditionalFormatRule: {
           rule: {
@@ -880,6 +880,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
               },
             },
           },
+          index: idx, // Explicit index preserves priority order (≥90% first = highest priority)
         },
       });
     });
@@ -1481,7 +1482,8 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
     { rgb: [239, 83, 80],    type: "NUMBER_GREATER_THAN_EQ", values: [{ userEnteredValue: "0.10" }], dark: true }, // 10-19% red-orange
     { rgb: [198, 40, 40],    type: "NUMBER_BETWEEN",          values: [{ userEnteredValue: "0.001" }, { userEnteredValue: "0.10" }], dark: true }, // 0.1–9.9% deep red (excludes 0%)
   ];
-  marginBands.forEach((band) => {
+  marginBands.forEach((band, idx) => {
+    // Offset index by 10 because paidBands (10 rules) are added first in the same batch
     formatRequests.push({
       addConditionalFormatRule: {
         rule: {
@@ -1498,6 +1500,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
             },
           },
         },
+        index: 10 + idx, // After paidBands (0-9); preserves priority order
       },
     });
   });
