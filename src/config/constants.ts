@@ -5,75 +5,77 @@
 export const HEADER_ROW = [
   "Date",                              // A
   "REVIEW",                            // B
-  "Company Name",                      // C
-  "Preferred Partner Owner Name",      // D
-  "HeyPros ID #",                      // E
-  "Job #",                             // F
-  "Jobber Link",                       // G
-  "Job Status",                        // H
-  "Job Type",                          // I
-  "Client Name",                       // J
-  "Division",                          // K
-  "# of Invoices",                     // L  (NEW — auto, Jobber)
-  "Total Invoiced",                    // M  (NEW — auto, Jobber)
-  "All Paid?",                         // N  (NEW — auto, ✅/❌)
-  "HEY PROS INVOICE NUMBER",          // O  (was Q)
-  "Sub Invoice Amount",               // P  (was R)
-  "KCPC Released Amount",             // Q  (was S — MANUAL)
-  "Contractor Invoice PDF",           // R  (was T)
-  "Payment Status",                   // S  (was U — MANUAL)
-  "Payment Tracking (Finance)",       // T  (was V — MANUAL)
-  "Payment Method (Finance)",         // U  (was W — MANUAL)
-  "Date of Payment",                  // V  (was X — MANUAL)
-  "NOTES / REMARKS",                  // W  (was Y — MANUAL)
-  "Auto Notes",                       // X  (was Z)
-  "Inv #1",                           // Y  (tracker block)
-  "Inv #1 Amt",                       // Z
-  "Inv #1 Paid?",                     // AA
-  "Inv #2",                           // AB
-  "Inv #2 Amt",                       // AC
-  "Inv #2 Paid?",                     // AD
-  "Inv #3",                           // AE
-  "Inv #3 Amt",                       // AF
-  "Inv #3 Paid?",                     // AG
-  "Inv #4",                           // AH
-  "Inv #4 Amt",                       // AI
-  "Inv #4 Paid?",                     // AJ
-  "Inv #5",                           // AK
-  "Inv #5 Amt",                       // AL
-  "Inv #5 Paid?",                     // AM
+  "Margin %",                          // C  (auto — placeholder)
+  "Company Name",                      // D
+  "Preferred Partner Owner Name",      // E
+  "HeyPros ID #",                      // F
+  "Job #",                             // G
+  "Jobber Link",                       // H
+  "Job Status",                        // I
+  "Job Type",                          // J
+  "Client Name",                       // K
+  "Division",                          // L
+  "# of Invoices",                     // M  (auto, Jobber)
+  "Total Invoiced",                    // N  (auto, Jobber)
+  "All Paid?",                         // O  (auto, ✅/❌)
+  "HEY PROS INVOICE NUMBER",          // P
+  "Sub Invoice Amount",               // Q
+  "KCPC Released Amount",             // R  (MANUAL)
+  "Contractor Invoice PDF",           // S
+  "Payment Status",                   // T  (MANUAL)
+  "Payment Tracking (Finance)",       // U  (MANUAL)
+  "Payment Method (Finance)",         // V  (MANUAL)
+  "Date of Payment",                  // W  (MANUAL)
+  "NOTES / REMARKS",                  // X  (MANUAL)
+  "Auto Notes",                       // Y
+  "Inv #1",                           // Z  (tracker block)
+  "Inv #1 Amt",                       // AA
+  "Inv #1 Paid?",                     // AB
+  "Inv #2",                           // AC
+  "Inv #2 Amt",                       // AD
+  "Inv #2 Paid?",                     // AE
+  "Inv #3",                           // AF
+  "Inv #3 Amt",                       // AG
+  "Inv #3 Paid?",                     // AH
+  "Inv #4",                           // AI
+  "Inv #4 Amt",                       // AJ
+  "Inv #4 Paid?",                     // AK
+  "Inv #5",                           // AL
+  "Inv #5 Amt",                       // AM
+  "Inv #5 Paid?",                     // AN
 ];
 
 /**
  * LEGACY 26-column layout (A–Z) for Jan/Feb tabs (backward compat).
  */
 export const HEADER_ROW_LEGACY = [
-  "Date",
-  "REVIEW",
-  "Company Name",
-  "Preferred Partner Owner Name",
-  "HeyPros ID #",
-  "Job #",
-  "Jobber Link",
-  "Job Status",
-  "Job Type",
-  "Client Name",
-  "Division",
-  "Invoice Number",
-  "Jobber Invoice Total Amount",
-  "Invoice Issued Date",
-  "Jobber Invoice Status",
-  "Date Invoice Paid (Auto Populates)",
-  "HEY PROS INVOICE NUMBER",
-  "Sub Invoice Amount",
-  "KCPC Released Amount",
-  "Contractor Invoice PDF",
-  "Payment Status",
-  "Payment Tracking (Finance)",
-  "Payment Method (Finance)",
-  "Date of Payment",
-  "NOTES / REMARKS",
-  "Auto Notes",
+  "Date",                              // A
+  "REVIEW",                            // B
+  "Margin %",                          // C  (auto — placeholder)
+  "Company Name",                      // D
+  "Preferred Partner Owner Name",      // E
+  "HeyPros ID #",                      // F
+  "Job #",                             // G
+  "Jobber Link",                       // H
+  "Job Status",                        // I
+  "Job Type",                          // J
+  "Client Name",                       // K
+  "Division",                          // L
+  "Invoice Number",                    // M
+  "Jobber Invoice Total Amount",       // N
+  "Invoice Issued Date",              // O
+  "Jobber Invoice Status",            // P
+  "Date Invoice Paid (Auto Populates)", // Q
+  "HEY PROS INVOICE NUMBER",          // R
+  "Sub Invoice Amount",               // S
+  "KCPC Released Amount",             // T  (MANUAL)
+  "Contractor Invoice PDF",           // U
+  "Payment Status",                   // V  (MANUAL)
+  "Payment Tracking (Finance)",       // W  (MANUAL)
+  "Payment Method (Finance)",         // X  (MANUAL)
+  "Date of Payment",                  // Y  (MANUAL)
+  "NOTES / REMARKS",                  // Z  (MANUAL)
+  "Auto Notes",                       // AA
 ];
 
 export const HEYPROS_FILE_BASE = "https://kc-power-clean.heypros.com/files/";

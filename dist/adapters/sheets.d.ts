@@ -9,9 +9,9 @@ export declare function readOutputSheetJobNumbers(spreadsheetId: string, tab?: s
     existingInvoiceValue: string;
 }>>;
 /**
- * NEW layout (March-forward): auto-populated columns in A–AM layout.
- * Manual/finance columns NOT in this set: B (review), F (job#), Q (KCPC Released),
- * S (Payment Status), T (Payment Tracking), U (Payment Method), V (Date of Payment), W (Notes).
+ * NEW layout (March-forward): auto-populated columns in A–AN layout.
+ * Manual/finance columns NOT in this set: B (review), G (job#), R (KCPC Released),
+ * T (Payment Status), U (Payment Tracking), V (Payment Method), W (Date of Payment), X (Notes).
  */
 export declare const AUTO_COL_LETTERS_NEW: Set<string>;
 /**
@@ -58,8 +58,8 @@ export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string):
  * Apply black text formatting to hyperlink columns so links render as
  * black underlined text instead of default Google blue.
  *
- * New layout link cols: E(4), G(6), J(9), R(17)
- * Legacy/recurring link cols: E(4), G(6), J(9), T(19)
+ * New layout link cols: F(5), H(7), K(10), S(18)
+ * Legacy/recurring link cols: F(5), H(7), K(10), U(20)
  */
 export declare function formatLinkColumns(spreadsheetId: string, tab: string, rowCount: number): Promise<void>;
 export interface SyncLogEntry {
