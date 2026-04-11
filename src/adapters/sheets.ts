@@ -189,19 +189,23 @@ export async function refreshGTPTab(
   function extractGtpRows(
     rows: string[][],
     layoutNew: boolean,
+    recurring: boolean = false,
   ): string[][] {
+    // Recurring tabs: 26-col layout (no margin col C) — all indices after A are -1 vs legacy one-off
+    // Legacy one-off (Feb): 27-col layout (margin col C inserted) — original indices
     const COL_DATE = 0;
-    const COL_COMPANY = 3;
-    const COL_PP_OWNER = 4;
-    const COL_JOB_NUM = 6;
-    const COL_CLIENT_NAME = 10;
+    const COL_COMPANY = recurring ? 2 : 3;         // C(2) recurring, D(3) legacy
+    const COL_PP_OWNER = recurring ? 3 : 4;         // D(3) recurring, E(4) legacy
+    const COL_JOB_NUM = recurring ? 5 : 6;          // F(5) recurring, G(6) legacy
+    const COL_CLIENT_NAME = recurring ? 9 : 10;     // J(9) recurring, K(10) legacy
 
     // New layout: O=14 (All Paid?), Q=16 (Sub Inv Amt), T=19 (Payment Status), U=20 (Payment Tracking)
-    // Legacy:     P=15 (Invoice Status), S=18 (Sub Inv Amt), V=21 (Payment Status), W=22 (Payment Tracking)
-    const COL_PAID_CHECK = layoutNew ? 14 : 15;
-    const COL_SUB_AMOUNT = layoutNew ? 16 : 18;
-    const COL_PAYMENT_STATUS = layoutNew ? 19 : 21;
-    const COL_PAYMENT_TRACKING = layoutNew ? 20 : 22;
+    // Legacy one-off (Feb w/ margin col C): P=15, S=18, V=21, W=22
+    // Recurring (no margin col C):          O=14, R=17, U=20, V=21
+    const COL_PAID_CHECK = layoutNew ? 14 : recurring ? 14 : 15;
+    const COL_SUB_AMOUNT = layoutNew ? 16 : recurring ? 17 : 18;
+    const COL_PAYMENT_STATUS = layoutNew ? 19 : recurring ? 20 : 21;
+    const COL_PAYMENT_TRACKING = layoutNew ? 20 : recurring ? 21 : 22;
 
     const paidValue = layoutNew ? "✅" : "Paid";
 
@@ -250,9 +254,9 @@ export async function refreshGTPTab(
   try {
     const recurRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${recurringTab}'!A2:V500`,
+      range: `'${recurringTab}'!A2:W500`,
     });
-    const recurGtp = extractGtpRows(recurRes.data.values ?? [], false);
+    const recurGtp = extractGtpRows(recurRes.data.values ?? [], false, true);
     console.log(`  GTP from '${recurringTab}': ${recurGtp.length} rows`);
     gtpRows.push(...recurGtp);
   } catch (e: any) {
@@ -484,13 +488,18 @@ function getDashboardColIndices(tabName: string): {
 } {
   const isRecurring = tabName.endsWith(" - R");
 
-  if (isRecurring || !isNewLayout(tabName)) {
-    // Legacy (Jan/Feb with or without year suffix) and recurring tabs
-    // W (index 22) = Payment Tracking
+  if (isRecurring) {
+    // Recurring tabs: 26-col layout, NO margin column C
+    // U(20)=Payment Status, V(21)=Payment Tracking, R(17)=Sub Invoice Amount, O(14)=Invoice Status
+    return { paymentStatus: 20, paymentTracking: 21, subInvoiceAmount: 17, allPaid: 14 };
+  }
+  if (!isNewLayout(tabName)) {
+    // Legacy one-off tabs (Jan/Feb) WITH margin column C inserted (+1 shift)
+    // V(21)=Payment Status, W(22)=Payment Tracking, S(18)=Sub Invoice Amount, P(15)=Invoice Status
     return { paymentStatus: 21, paymentTracking: 22, subInvoiceAmount: 18, allPaid: 15 };
   }
   // New layout (March+)
-  // U (index 20) = Payment Tracking
+  // T(19)=Payment Status, U(20)=Payment Tracking, Q(16)=Sub Invoice Amount, O(14)=All Paid
   return { paymentStatus: 19, paymentTracking: 20, subInvoiceAmount: 16, allPaid: 14 };
 }
 

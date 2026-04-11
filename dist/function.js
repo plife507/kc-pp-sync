@@ -892,7 +892,156 @@ export async function kcPPSync(req, res) {
             const matching = cf
                 .map((rule, idx) => ({ idx, rule }))
                 .filter(({ rule }) => rule.ranges?.some((r) => r.startColumnIndex <= targetCol && (!r.endColumnIndex || r.endColumnIndex > targetCol)));
-            res.json({ tab: tabName, col: targetCol, totalRules: cf.length, matchingRules: matching.length, rules: matching });
+            const result = { tab: tabName, col: targetCol, totalRules: cf.length, matchingRules: matching.length, rules: matching };
+            console.log(`debugCF: ${JSON.stringify(result)}`);
+            res.json(result);
+            return;
+        }
+        // One-shot: fix misplaced status CF rules on Col V → move to Col T
+        if (req.body?.fixColVCF) {
+            const tabName = req.body.fixColVCF;
+            const { google } = await import("googleapis");
+            const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+            const sheets = google.sheets({ version: "v4", auth: gauth });
+            const meta = await sheets.spreadsheets.get({
+                spreadsheetId: config.sheets.spreadsheetId,
+                fields: "sheets(properties,conditionalFormats)",
+            });
+            const sheet = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+            if (!sheet) {
+                res.json({ error: `Tab "${tabName}" not found` });
+                return;
+            }
+            const sheetId = sheet.properties.sheetId;
+            const cf = sheet.conditionalFormats || [];
+            // Status values that belong on Col T (19), not Col V (21)
+            const statusValues = new Set(["No Payment", "Pending Approval in HP", "NO CLIENT PAY", "On Hold", "Good to Pay"]);
+            // Find misplaced status rules on Col V (index 21)
+            const toDelete = [];
+            for (let i = 0; i < cf.length; i++) {
+                const rule = cf[i];
+                const ranges = rule.ranges || [];
+                const isColV = ranges.some((r) => r.startColumnIndex === 21 && (r.endColumnIndex === 22 || !r.endColumnIndex));
+                if (!isColV)
+                    continue;
+                const cond = rule.booleanRule?.condition;
+                if (!cond)
+                    continue;
+                // Check if it's a status-value rule
+                if (cond.type === "TEXT_EQ") {
+                    const val = cond.values?.[0]?.userEnteredValue || "";
+                    if (statusValues.has(val))
+                        toDelete.push(i);
+                }
+                else if (cond.type === "CUSTOM_FORMULA") {
+                    const formula = cond.values?.[0]?.userEnteredValue || "";
+                    if (formula.includes("No Payment") || formula.includes("NO CLIENT PAY"))
+                        toDelete.push(i);
+                }
+            }
+            // Delete in reverse order to preserve indices
+            const deleteRequests = toDelete.sort((a, b) => b - a).map((idx) => ({
+                deleteConditionalFormatRule: { sheetId, index: idx },
+            }));
+            // Check what Col T (19) already has
+            const existingColT = new Set();
+            for (const rule of cf) {
+                const ranges = rule.ranges || [];
+                const isColT = ranges.some((r) => r.startColumnIndex === 19 && r.endColumnIndex === 20);
+                if (!isColT)
+                    continue;
+                const cond = rule.booleanRule?.condition;
+                if (cond?.type === "TEXT_EQ")
+                    existingColT.add(cond.values?.[0]?.userEnteredValue || "");
+                if (cond?.type === "CUSTOM_FORMULA")
+                    existingColT.add("FORMULA:" + (cond.values?.[0]?.userEnteredValue || ""));
+                if (cond?.type === "NOT_BLANK")
+                    existingColT.add("NOT_BLANK");
+            }
+            // Check what Col V (21) already has for payment method
+            const existingColV = new Set();
+            for (const rule of cf) {
+                const ranges = rule.ranges || [];
+                const isColV = ranges.some((r) => r.startColumnIndex === 21 && r.endColumnIndex === 22);
+                if (!isColV)
+                    continue;
+                const cond = rule.booleanRule?.condition;
+                if (cond?.type === "TEXT_EQ")
+                    existingColV.add(cond.values?.[0]?.userEnteredValue || "");
+                if (cond?.type === "NOT_BLANK")
+                    existingColV.add("NOT_BLANK");
+            }
+            const addRequests = [];
+            // Add missing rules to Col T (19)
+            const colTRules = [
+                { type: "CUSTOM_FORMULA", formula: '=$T2="No Payment"', bg: { red: 0.847, green: 0.847, blue: 0.847 } },
+                { type: "TEXT_EQ", value: "Pending Approval in HP", bg: { red: 0.847, green: 0.847, blue: 1 } },
+                { type: "TEXT_EQ", value: "NO CLIENT PAY", bg: { red: 0.957, green: 0.8, blue: 0.8 } },
+                { type: "TEXT_EQ", value: "On Hold", bg: { red: 1, green: 0.949, blue: 0.8 } },
+                { type: "TEXT_EQ", value: "Good to Pay", bg: { red: 0.718, green: 0.878, blue: 0.718 } },
+            ];
+            for (const r of colTRules) {
+                const key = r.type === "CUSTOM_FORMULA" ? `FORMULA:${r.formula}` : r.value || "";
+                if (existingColT.has(key))
+                    continue;
+                addRequests.push({
+                    addConditionalFormatRule: {
+                        rule: {
+                            ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 19, endColumnIndex: 20 }],
+                            booleanRule: {
+                                condition: r.type === "CUSTOM_FORMULA"
+                                    ? { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: r.formula }] }
+                                    : { type: "TEXT_EQ", values: [{ userEnteredValue: r.value }] },
+                                format: { backgroundColor: r.bg, backgroundColorStyle: { rgbColor: r.bg } },
+                            },
+                        },
+                    },
+                });
+            }
+            // NOT_BLANK fallback on Col T
+            if (!existingColT.has("NOT_BLANK")) {
+                addRequests.push({
+                    addConditionalFormatRule: {
+                        rule: {
+                            ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 19, endColumnIndex: 20 }],
+                            booleanRule: {
+                                condition: { type: "NOT_BLANK" },
+                                format: { backgroundColor: { red: 0.949, green: 0.949, blue: 0.949 }, backgroundColorStyle: { rgbColor: { red: 0.949, green: 0.949, blue: 0.949 } } },
+                            },
+                        },
+                    },
+                });
+            }
+            // Add QBO payment method highlight to Col V if missing
+            if (!existingColV.has("QBO-Billpay- ACH/Check")) {
+                addRequests.push({
+                    addConditionalFormatRule: {
+                        rule: {
+                            ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 21, endColumnIndex: 22 }],
+                            booleanRule: {
+                                condition: { type: "TEXT_EQ", values: [{ userEnteredValue: "QBO-Billpay- ACH/Check" }] },
+                                format: { backgroundColor: { red: 0.847, green: 0.918, blue: 1 }, backgroundColorStyle: { rgbColor: { red: 0.847, green: 0.918, blue: 1 } } },
+                            },
+                        },
+                    },
+                });
+            }
+            const allRequests = [...deleteRequests, ...addRequests];
+            if (allRequests.length > 0) {
+                await sheets.spreadsheets.batchUpdate({ spreadsheetId: config.sheets.spreadsheetId, requestBody: { requests: allRequests } });
+            }
+            const result = {
+                status: "ok",
+                tab: tabName,
+                deleted: toDelete.length,
+                deletedIndices: toDelete,
+                addedToColT: addRequests.filter(r => r.addConditionalFormatRule?.rule?.ranges?.[0]?.startColumnIndex === 19).length,
+                addedToColV: addRequests.filter(r => r.addConditionalFormatRule?.rule?.ranges?.[0]?.startColumnIndex === 21).length,
+                existingColT: [...existingColT],
+                existingColV: [...existingColV],
+            };
+            console.log(`fixColVCF: ${JSON.stringify(result)}`);
+            res.json(result);
             return;
         }
         // Handle extendCF request: extend CF rules on a tab to 500 rows
