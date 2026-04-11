@@ -44,6 +44,8 @@ Four **Cloud Scheduler** jobs trigger hourly syncs:
 | `kc-pp-sync-prev-month` | every 4h :10 | `prev` | Previous month one-off |
 | `kc-pp-sync-prev-recurring` | every 4h :15 | `prev-r` | Previous month recurring |
 
+**GTP $ tabs and Dashboard auto-refresh** at the end of every sync — no separate scheduler jobs needed.
+
 ## Manual sync
 
 ### Apps Script sidebar (in-sheet)
