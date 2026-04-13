@@ -58,6 +58,8 @@ function resolveMode(mode: string): string | null {
     case "current-r": return `${currentMonthTabName()} - R`;
     case "prev":      return previousMonthTabName();
     case "prev-r":    return `${previousMonthTabName()} - R`;
+    case "dashboard": return "__dashboard__";
+    case "all-prev":  return "__all_prev__";
     default:          return null;
   }
 }

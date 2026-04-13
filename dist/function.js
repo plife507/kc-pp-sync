@@ -701,7 +701,151 @@ export async function kcPPSync(req, res) {
         if (bodyMode && typeof bodyMode === "string") {
             const resolved = resolveMode(bodyMode);
             if (!resolved) {
-                res.status(400).json({ status: "error", error: `Unknown mode: ${bodyMode}. Valid: current, current-r, prev, prev-r` });
+                res.status(400).json({ status: "error", error: `Unknown mode: ${bodyMode}. Valid: current, current-r, prev, prev-r, dashboard, all-prev` });
+                return;
+            }
+            if (resolved === "__dashboard__") {
+                console.log("  Mode 'dashboard' → dashboard-only refresh");
+                const dashCount = await refreshDashboard(config.sheets.spreadsheetId);
+                await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                await logSyncResult(config.sheets.spreadsheetId, {
+                    timestamp: new Date().toISOString(),
+                    tab: "Dashboard",
+                    status: "✅ OK",
+                    jobs: dashCount,
+                    rows: 0,
+                    gtpRows: 0,
+                    elapsed: `${elapsed}s`,
+                    error: "",
+                }).catch((e) => console.warn(`  Command log failed: ${e}`));
+                res.status(200).json({ status: "ok", elapsed: `${elapsed}s`, mode: "dashboard", totalJobs: dashCount });
+                return;
+            }
+            if (resolved === "__all_prev__") {
+                console.log("  Mode 'all-prev' → sync all months older than prev");
+                const { google } = await import("googleapis");
+                const gauth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
+                const sheetsApi = google.sheets({ version: "v4", auth: gauth });
+                const meta = await sheetsApi.spreadsheets.get({
+                    spreadsheetId: config.sheets.spreadsheetId,
+                    fields: "sheets.properties",
+                });
+                const allTabs = (meta.data.sheets ?? []).map((s) => s.properties?.title).filter(Boolean);
+                // Determine the previous month index to find all older months
+                const prevMonthName = resolveMode("prev"); // e.g., "March"
+                const prevMonthIdx = MONTH_NAMES.indexOf(prevMonthName);
+                // Find all one-off month tabs that exist and are strictly older than prev, excluding January
+                const olderMonths = [];
+                for (const tabName of allTabs) {
+                    const parsed = parseTabMonth(tabName);
+                    if (!parsed)
+                        continue;
+                    if (tabName.includes(" - R") || tabName.includes(" - GTP"))
+                        continue;
+                    // Must be a bare month name (one-off tab)
+                    if (parsed.month < prevMonthIdx && parsed.month > 0) { // > 0 excludes January (index 0)
+                        olderMonths.push(tabName);
+                    }
+                }
+                // Sort by month index ascending
+                olderMonths.sort((a, b) => {
+                    const aIdx = parseTabMonth(a).month;
+                    const bIdx = parseTabMonth(b).month;
+                    return aIdx - bIdx;
+                });
+                console.log(`  Older months to sync: ${olderMonths.length > 0 ? olderMonths.join(", ") : "(none)"}`);
+                // Self-call approach: POST to own service URL for each tab
+                const serviceUrl = process.env.K_SERVICE_URL || process.env.CLOUD_RUN_URL || "";
+                const monthsSynced = [];
+                let totalJobs = 0;
+                if (!serviceUrl) {
+                    console.warn("  No K_SERVICE_URL or CLOUD_RUN_URL — cannot self-call, skipping tab syncs");
+                }
+                else {
+                    const { GoogleAuth } = await import("google-auth-library");
+                    const auth = new GoogleAuth();
+                    for (const monthTab of olderMonths) {
+                        // Sync one-off tab
+                        try {
+                            console.log(`  all-prev: syncing ${monthTab}...`);
+                            const client = await auth.getIdTokenClient(serviceUrl);
+                            const response = await client.request({
+                                url: serviceUrl,
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                data: { tab: monthTab },
+                            });
+                            const data = response.data;
+                            console.log(`  all-prev: ${monthTab} → ${data?.status} (${data?.jobNumbers ?? 0} jobs)`);
+                            totalJobs += data?.jobNumbers ?? 0;
+                            monthsSynced.push(monthTab);
+                        }
+                        catch (e) {
+                            console.warn(`  all-prev: ${monthTab} failed: ${e}`);
+                            await logSyncResult(config.sheets.spreadsheetId, {
+                                timestamp: new Date().toISOString(),
+                                tab: `all-prev:${monthTab}`,
+                                status: "🔴 FAILED",
+                                jobs: 0, rows: 0, gtpRows: 0,
+                                elapsed: "0s",
+                                error: e instanceof Error ? e.message : String(e),
+                            }).catch(() => { });
+                        }
+                        // Sync recurring tab if it exists
+                        const recurringTab = `${monthTab} - R`;
+                        if (allTabs.includes(recurringTab)) {
+                            try {
+                                console.log(`  all-prev: syncing ${recurringTab}...`);
+                                const client = await auth.getIdTokenClient(serviceUrl);
+                                const response = await client.request({
+                                    url: serviceUrl,
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    data: { tab: recurringTab },
+                                });
+                                const data = response.data;
+                                console.log(`  all-prev: ${recurringTab} → ${data?.status} (${data?.jobNumbers ?? 0} jobs)`);
+                                totalJobs += data?.jobNumbers ?? 0;
+                                monthsSynced.push(recurringTab);
+                            }
+                            catch (e) {
+                                console.warn(`  all-prev: ${recurringTab} failed: ${e}`);
+                                await logSyncResult(config.sheets.spreadsheetId, {
+                                    timestamp: new Date().toISOString(),
+                                    tab: `all-prev:${recurringTab}`,
+                                    status: "🔴 FAILED",
+                                    jobs: 0, rows: 0, gtpRows: 0,
+                                    elapsed: "0s",
+                                    error: e instanceof Error ? e.message : String(e),
+                                }).catch(() => { });
+                            }
+                        }
+                    }
+                }
+                // Dashboard refresh after all syncs
+                console.log("  all-prev: refreshing Dashboard...");
+                const dashCount = await refreshDashboard(config.sheets.spreadsheetId);
+                await refreshProfitabilityDashboard(config.sheets.spreadsheetId);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                await logSyncResult(config.sheets.spreadsheetId, {
+                    timestamp: new Date().toISOString(),
+                    tab: "all-prev",
+                    status: "✅ OK",
+                    jobs: totalJobs,
+                    rows: monthsSynced.length,
+                    gtpRows: 0,
+                    elapsed: `${elapsed}s`,
+                    error: "",
+                }).catch((e) => console.warn(`  Command log failed: ${e}`));
+                res.status(200).json({
+                    status: "ok",
+                    elapsed: `${elapsed}s`,
+                    mode: "all-prev",
+                    monthsSynced,
+                    totalJobs,
+                    dashboardJobs: dashCount,
+                });
                 return;
             }
             config.sheets.sheetsTab = resolved;
