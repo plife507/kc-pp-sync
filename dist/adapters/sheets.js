@@ -1137,8 +1137,8 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                         const clientPaid = invStatus.toLowerCase() === "paid";
                         const dateStr = (row[0] ?? "").toString().trim();
                         const weekKey = getWeekSunday(dateStr);
-                        // Labor + Revenue: only count when client has paid
-                        if (clientPaid) {
+                        // Labor + Revenue: only count when client has paid AND sub invoice amount is populated
+                        if (clientPaid && labor > 0) {
                             if (isHybrid) {
                                 hybridLabor += labor;
                                 seenHybridJobs.add(jobNum);
@@ -1224,8 +1224,9 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                         const clientPaid = allPaid === "✅";
                         const dateStr = (row[0] ?? "").toString().trim();
                         const weekKey = getWeekSunday(dateStr);
-                        // Labor + Revenue: only count when client has paid
-                        if (clientPaid) {
+                        // Labor + Revenue: only count when client has paid AND sub invoice amount is populated
+                        // Jobs with $0/blank sub invoice are excluded — sub cost not yet entered
+                        if (clientPaid && labor > 0) {
                             if (isHybrid) {
                                 hybridLabor += labor;
                                 seenHybridJobs.add(jobNum);
@@ -1319,7 +1320,8 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                         wk.recurringVisits++;
                         wk.recurringInvoices.add(invoiceNum);
                     }
-                    if (clientPaid) {
+                    // Only count when client has paid AND sub invoice amount is populated
+                    if (clientPaid && labor > 0) {
                         recurringLabor += labor;
                         if (weekKey)
                             getOrCreateWeek(weekKey).recurringLabor += labor;
@@ -1477,7 +1479,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         [""],
         ["ℹ️ How numbers are calculated:"],
         ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
-        ["  Labor      — Sub Invoice Amount (col P/R). Counted only when client has paid (same gate as revenue). If client hasn't paid, labor is excluded — those jobs appear in # Excluded."],
+        ["  Labor      — Sub Invoice Amount (col P/R). Counted only when client has paid AND sub invoice amount > $0 (same gate as revenue). Jobs with $0 or blank sub invoice are excluded — sub cost not yet entered."],
         ["  One-off    — Division = 'Subcontractor - Dayshift' (or unrecognised). Revenue deduped by Job # to prevent double-counting multi-contractor jobs."],
         ["  Hybrid     — Division = 'Hybrid'. KC in-house labor + one or more PPs on the same job. ⚠️ Margin is a ceiling — KC's own cost of labor is not yet tracked (coming with Hybrid tab)."],
         ["  Recurring  — Jobs on the {Month} - R tabs. Revenue deduped by Invoice # (one billing cycle invoice covers multiple visits). # Recur. Visits = total invoiced rows; # Recur. Invoices = unique invoices. Divide visits by invoices to understand avg visits per billing cycle. Recurring margin is per-invoice — for per-visit margin, divide by visits/invoices ratio."],
