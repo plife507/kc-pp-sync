@@ -1251,7 +1251,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         // Hybrid
         "Hybrid Revenue", "Hybrid Labor", "# Hybrid Jobs",
         // Totals
-        "Total Revenue", "Total Labor", "Gross Profit", "Total Margin %",
+        "Total Revenue (excl. Hybrid)", "Total Labor (excl. Hybrid)", "Gross Profit (excl. Hybrid)", "Total Margin %",
     ];
     // Sort weeks chronologically
     const sortedWeeks = Array.from(weekMap.values()).sort((a, b) => a.weekKey.localeCompare(b.weekKey));
