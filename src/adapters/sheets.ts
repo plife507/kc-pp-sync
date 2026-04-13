@@ -57,6 +57,7 @@ export const AUTO_COL_LETTERS_NEW = new Set([
   "AF","AG","AH",        // tracker slot 3
   "AI","AJ","AK",        // tracker slot 4
   "AL","AM","AN",        // tracker slot 5
+  "AO",                  // Client Paid Date (latest invoice receivedDate)
 ]);
 
 /**
@@ -125,12 +126,44 @@ export async function batchUpdateRecurringColumns(
   });
 }
 
+/**
+ * Ensure a sheet tab has at least `minCols` columns.
+ * Appends columns if needed. No-op if already wide enough.
+ */
+async function ensureGridColumns(spreadsheetId: string, tab: string, minCols: number): Promise<void> {
+  const sheets = await getSheetsClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
+  const sheetProps = (meta.data.sheets ?? []).find(s => s.properties?.title === tab);
+  if (!sheetProps) return; // tab not found, will fail elsewhere
+  const currentCols = sheetProps.properties?.gridProperties?.columnCount ?? 0;
+  if (currentCols >= minCols) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        appendDimension: {
+          sheetId: sheetProps.properties!.sheetId!,
+          dimension: "COLUMNS",
+          length: minCols - currentCols,
+        },
+      }],
+    },
+  });
+  console.log(`  ${tab}: expanded grid from ${currentCols} to ${minCols} columns`);
+}
+
 export async function batchUpdateAutoColumns(
   spreadsheetId: string,
   tab: string,
   updates: Array<{ rowIndex: number; values: Record<string, string> }>,
 ): Promise<void> {
   if (updates.length === 0) return;
+
+  // New layout writes to col AO (index 40) — ensure grid is wide enough
+  if (isNewLayout(tab)) {
+    await ensureGridColumns(spreadsheetId, tab, 41);
+  }
+
   const sheets = await getSheetsClient();
   const allowedCols = isNewLayout(tab) ? AUTO_COL_LETTERS_NEW : AUTO_COL_LETTERS_LEGACY;
   const data: Array<{ range: string; values: string[][] }> = [];
@@ -492,22 +525,26 @@ function getDashboardColIndices(tabName: string): {
   paymentTracking: number;
   subInvoiceAmount: number;
   allPaid: number;
+  clientPaidDate: number;
 } {
   const isRecurring = tabName.endsWith(" - R");
 
   if (isRecurring) {
     // Recurring tabs: 26-col layout, NO margin column C
     // U(20)=Payment Status, V(21)=Payment Tracking, R(17)=Sub Invoice Amount, O(14)=Invoice Status
-    return { paymentStatus: 20, paymentTracking: 21, subInvoiceAmount: 17, allPaid: 14 };
+    // P(15)=Date Invoice Paid
+    return { paymentStatus: 20, paymentTracking: 21, subInvoiceAmount: 17, allPaid: 14, clientPaidDate: 15 };
   }
   if (!isNewLayout(tabName)) {
     // Legacy one-off tabs (Jan/Feb) WITH margin column C inserted (+1 shift)
     // V(21)=Payment Status, W(22)=Payment Tracking, S(18)=Sub Invoice Amount, P(15)=Invoice Status
-    return { paymentStatus: 21, paymentTracking: 22, subInvoiceAmount: 18, allPaid: 15 };
+    // Q(16)=Date Invoice Paid
+    return { paymentStatus: 21, paymentTracking: 22, subInvoiceAmount: 18, allPaid: 15, clientPaidDate: 16 };
   }
   // New layout (March+)
   // T(19)=Payment Status, U(20)=Payment Tracking, Q(16)=Sub Invoice Amount, O(14)=All Paid
-  return { paymentStatus: 19, paymentTracking: 20, subInvoiceAmount: 16, allPaid: 14 };
+  // AO(40)=Client Paid Date
+  return { paymentStatus: 19, paymentTracking: 20, subInvoiceAmount: 16, allPaid: 14, clientPaidDate: 40 };
 }
 
 /**
@@ -576,12 +613,15 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
 
   for (const tab of scanTabs) {
     const cols = getDashboardColIndices(tab);
-    const maxCol = Math.max(cols.paymentStatus, cols.paymentTracking, cols.subInvoiceAmount, cols.allPaid);
-    // Convert max column index to letter for range
-    const endColLetter = String.fromCharCode(65 + Math.min(maxCol, 25));
-    const range = maxCol > 25
-      ? `'${tab}'!A2:Z500`
-      : `'${tab}'!A2:${endColLetter}500`;
+    const maxCol = Math.max(cols.paymentStatus, cols.paymentTracking, cols.subInvoiceAmount, cols.allPaid, cols.clientPaidDate);
+    // Convert max column index to letter(s) for range
+    let endColRef: string;
+    if (maxCol < 26) {
+      endColRef = String.fromCharCode(65 + maxCol);
+    } else {
+      endColRef = String.fromCharCode(64 + Math.floor(maxCol / 26)) + String.fromCharCode(65 + (maxCol % 26));
+    }
+    const range = `'${tab}'!A2:${endColRef}500`;
 
     let rows: string[][];
     try {
@@ -651,13 +691,13 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       } else if (statusLower === "good to pay") {
         stats.goodToPay++;
         stats.goodToPayAmount += subAmount;
-        // GTP aging: bucket by days since job date (col A)
-        const jobDateStr = (row[0] ?? "").toString().trim();
-        if (jobDateStr) {
-          const jobDate = new Date(jobDateStr);
-          if (!isNaN(jobDate.getTime())) {
+        // GTP aging: bucket by days since CLIENT paid date (last invoice payment)
+        const paidDateStr = (row[cols.clientPaidDate] ?? "").toString().trim();
+        if (paidDateStr) {
+          const paidDate = new Date(paidDateStr);
+          if (!isNaN(paidDate.getTime())) {
             const now = new Date();
-            const diffMs = now.getTime() - jobDate.getTime();
+            const diffMs = now.getTime() - paidDate.getTime();
             const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
             if (diffDays <= 7) { stats.gtp7d++; stats.gtp7dAmt += subAmount; }
             else if (diffDays <= 14) { stats.gtp14d++; stats.gtp14dAmt += subAmount; }

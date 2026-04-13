@@ -255,6 +255,12 @@ async function runSourceSheetFlow(config) {
             }
             // Y = Auto Notes
             values.Y = "";
+            // AO = Client Paid Date (latest receivedDate across all paid invoices)
+            const paidDates = invoiceList
+                .filter(ji => ji.invoiceStatus === "paid" && ji.paidDate)
+                .map(ji => new Date(ji.paidDate).getTime())
+                .filter(t => !isNaN(t));
+            values.AO = paidDates.length > 0 ? formatDate(new Date(Math.max(...paidDates)).toISOString()) : "";
         }
         else {
             // ──────── LEGACY LAYOUT (Jan/Feb): A–AA ────────
