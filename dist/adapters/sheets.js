@@ -882,8 +882,55 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         MONTHS_TO_SCAN.push({ display: monthName, oneOffTab, recurringTab, type });
     }
     console.log(`  Profitability: discovered ${MONTHS_TO_SCAN.length} months: ${MONTHS_TO_SCAN.map(m => m.display).join(", ")}`);
-    // 3. Aggregate data per month
+    // Helper: derive ISO date of the Sunday starting the week containing the given date string
+    function getWeekSunday(dateStr) {
+        if (!dateStr)
+            return null;
+        // Handle M/D/YYYY (e.g. "3/14/2026") and YYYY-MM-DD
+        let d;
+        if (dateStr.includes("/")) {
+            const parts = dateStr.split("/");
+            if (parts.length === 3) {
+                d = new Date(parseInt(parts[2], 10), parseInt(parts[0], 10) - 1, parseInt(parts[1], 10));
+            }
+            else {
+                return null;
+            }
+        }
+        else {
+            d = new Date(dateStr + "T12:00:00Z");
+        }
+        if (isNaN(d.getTime()))
+            return null;
+        const day = d.getDay(); // 0=Sun
+        const sun = new Date(d);
+        sun.setDate(d.getDate() - day);
+        return sun.toISOString().split("T")[0]; // "YYYY-MM-DD"
+    }
+    function weekLabel(sundayIso) {
+        const sun = new Date(sundayIso + "T12:00:00Z");
+        const sat = new Date(sun);
+        sat.setUTCDate(sun.getUTCDate() + 6);
+        const fmt = (dt) => dt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+        return `${fmt(sun)} – ${fmt(sat)}`;
+    }
+    // 3. Aggregate data — dual pass: per-month (for C1 headers) + per-week (for Dashboard display)
+    // Monthly buckets (for C1 margin return map)
     const monthData = [];
+    const weekMap = new Map();
+    function getOrCreateWeek(weekKey) {
+        if (!weekMap.has(weekKey)) {
+            weekMap.set(weekKey, {
+                weekKey,
+                label: weekLabel(weekKey),
+                oneOffRevenue: 0, oneOffLabor: 0, oneOffJobs: new Set(), oneOffExcluded: 0,
+                recurringRevenue: 0, recurringLabor: 0, recurringVisits: 0,
+                recurringInvoices: new Set(), recurringExcluded: new Set(),
+                hybridRevenue: 0, hybridLabor: 0, hybridJobs: new Set(),
+            });
+        }
+        return weekMap.get(weekKey);
+    }
     for (const m of MONTHS_TO_SCAN) {
         const hasOneOff = allTabs.includes(m.oneOffTab);
         const hasRecurring = allTabs.includes(m.recurringTab);
@@ -909,11 +956,11 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                 const rows = (res.data.values ?? []);
                 if (m.type === "legacy") {
                     // Legacy layout (Jan/Feb):
-                    //   G=Job#(6), L=Division(11), M=Invoice#(12), N=TotalInvoiced(13),
+                    //   A=Date(0), G=Job#(6), L=Division(11), M=Invoice#(12), N=TotalInvoiced(13),
                     //   P=InvoiceStatus(15), S=SubInvAmt(18), V=PaymentStatus(21)
                     // Invoice gate: col M must be a real invoice number (not blank, not "-")
                     // Revenue gate: InvoiceStatus(P) = "Paid"
-                    // Dedup revenue by Invoice #
+                    // Dedup revenue by Invoice # (monthly) and per-week
                     const seenInvoices = new Set();
                     for (const row of rows) {
                         const jobNum = (row[6] ?? "").toString().trim();
@@ -933,17 +980,29 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                             continue;
                         const isHybrid = division === "Hybrid";
                         const clientPaid = invStatus.toLowerCase() === "paid";
+                        const dateStr = (row[0] ?? "").toString().trim();
+                        const weekKey = getWeekSunday(dateStr);
                         // Labor + Revenue: only count when client has paid
                         if (clientPaid) {
                             if (isHybrid) {
                                 hybridLabor += labor;
                                 seenHybridJobs.add(jobNum);
+                                if (weekKey) {
+                                    const wk = getOrCreateWeek(weekKey);
+                                    wk.hybridLabor += labor;
+                                    wk.hybridJobs.add(jobNum);
+                                }
                             }
                             else {
                                 oneOffLabor += labor;
                                 seenOneOffJobs.add(jobNum);
+                                if (weekKey) {
+                                    const wk = getOrCreateWeek(weekKey);
+                                    wk.oneOffLabor += labor;
+                                    wk.oneOffJobs.add(jobNum);
+                                }
                             }
-                            // Revenue: dedup by Invoice #
+                            // Revenue: dedup by Invoice # (monthly)
                             if (!seenInvoices.has(invoiceNum)) {
                                 seenInvoices.add(invoiceNum);
                                 const rev = parseDollarAmount(invTotal);
@@ -952,20 +1011,44 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                                 else
                                     oneOffRevenue += rev;
                             }
+                            // Revenue: dedup by Invoice # per-week
+                            if (weekKey) {
+                                const wk = getOrCreateWeek(weekKey);
+                                if (!wk.oneOffJobs.has(`inv:${invoiceNum}`) && !wk.hybridJobs.has(`inv:${invoiceNum}`)) {
+                                    // Use invoice-keyed dedup for legacy (one invoice = one revenue entry)
+                                    const weekInvKey = `inv:${invoiceNum}`;
+                                    if (isHybrid) {
+                                        if (!wk.hybridJobs.has(weekInvKey)) {
+                                            wk.hybridJobs.add(weekInvKey);
+                                            wk.hybridRevenue += parseDollarAmount(invTotal);
+                                        }
+                                    }
+                                    else {
+                                        if (!wk.oneOffJobs.has(weekInvKey)) {
+                                            wk.oneOffJobs.add(weekInvKey);
+                                            wk.oneOffRevenue += parseDollarAmount(invTotal);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         else if (!isHybrid) {
                             oneOffExcluded++;
+                            if (weekKey)
+                                getOrCreateWeek(weekKey).oneOffExcluded++;
                         }
                     }
                 }
                 else {
                     // New layout (March+):
-                    //   G=Job#(6), L=Division(11), M=#Invoices(12), N=TotalInvoiced(13),
+                    //   A=Date(0), G=Job#(6), L=Division(11), M=#Invoices(12), N=TotalInvoiced(13),
                     //   O=AllPaid?(14), Q=SubInvAmt(16), T=PaymentStatus(19)
                     // Invoice gate: col M (# of Invoices) must be > 0 — skips jobs not yet invoiced
                     // Revenue gate: All Paid?(O) = "✅"
                     // Dedup revenue by Job #
                     const seenJobsForRevenue = new Set();
+                    // Weekly dedup: per-weekKey sets
+                    const weekSeenJobs = new Map();
                     for (const row of rows) {
                         const jobNum = (row[6] ?? "").toString().trim();
                         if (!jobNum)
@@ -984,17 +1067,29 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                             continue;
                         const isHybrid = division === "Hybrid";
                         const clientPaid = allPaid === "✅";
+                        const dateStr = (row[0] ?? "").toString().trim();
+                        const weekKey = getWeekSunday(dateStr);
                         // Labor + Revenue: only count when client has paid
                         if (clientPaid) {
                             if (isHybrid) {
                                 hybridLabor += labor;
                                 seenHybridJobs.add(jobNum);
+                                if (weekKey) {
+                                    const wk = getOrCreateWeek(weekKey);
+                                    wk.hybridLabor += labor;
+                                    wk.hybridJobs.add(jobNum);
+                                }
                             }
                             else {
                                 oneOffLabor += labor;
                                 seenOneOffJobs.add(jobNum);
+                                if (weekKey) {
+                                    const wk = getOrCreateWeek(weekKey);
+                                    wk.oneOffLabor += labor;
+                                    wk.oneOffJobs.add(jobNum);
+                                }
                             }
-                            // Revenue: dedup by Job #
+                            // Revenue: dedup by Job # (monthly)
                             if (!seenJobsForRevenue.has(jobNum)) {
                                 seenJobsForRevenue.add(jobNum);
                                 const rev = parseDollarAmount(invTotal);
@@ -1003,9 +1098,26 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                                 else
                                     oneOffRevenue += rev;
                             }
+                            // Revenue: dedup by Job # per-week
+                            if (weekKey) {
+                                if (!weekSeenJobs.has(weekKey))
+                                    weekSeenJobs.set(weekKey, new Set());
+                                const wkSeen = weekSeenJobs.get(weekKey);
+                                if (!wkSeen.has(jobNum)) {
+                                    wkSeen.add(jobNum);
+                                    const rev = parseDollarAmount(invTotal);
+                                    const wk = getOrCreateWeek(weekKey);
+                                    if (isHybrid)
+                                        wk.hybridRevenue += rev;
+                                    else
+                                        wk.oneOffRevenue += rev;
+                                }
+                            }
                         }
                         else if (!isHybrid) {
                             oneOffExcluded++;
+                            if (weekKey)
+                                getOrCreateWeek(weekKey).oneOffExcluded++;
                         }
                     }
                 }
@@ -1016,7 +1128,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             }
         }
         // --- Recurring tab ---
-        // Layout: F=Job#(5), L=Invoice#(11), M=TotalInvoiced(12), O=InvoiceStatus(14), R=SubInvAmt(17)
+        // Layout: A=Date(0), F=Job#(5), L=Invoice#(11), M=TotalInvoiced(12), O=InvoiceStatus(14), R=SubInvAmt(17)
         // Invoice gate: col L must be a real invoice number (not blank, not "-")
         // Revenue gate: InvoiceStatus(O) = "Paid"
         // Dedup revenue by Invoice # (one billing cycle invoice covers multiple visits)
@@ -1029,7 +1141,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                     range: `'${m.recurringTab}'!A2:U500`,
                 });
                 const rows = (res.data.values ?? []);
-                // Single pass: track visits + labor per row, revenue dedup by Invoice #
+                // Single pass: track visits + labor per row, revenue dedup by Invoice # (monthly + weekly)
                 const seenPaidInvoices = new Set();
                 const seenUnpaidInvoices = new Set();
                 for (const row of rows) {
@@ -1043,19 +1155,38 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                     const invStatus = (row[14] ?? "").toString().trim();
                     const labor = parseDollarAmount((row[17] ?? "").toString());
                     const clientPaid = invStatus.toLowerCase() === "paid";
+                    const dateStr = (row[0] ?? "").toString().trim();
+                    const weekKey = getWeekSunday(dateStr);
                     recurringVisits++;
                     seenRecurringInvoices.add(invoiceNum);
+                    if (weekKey) {
+                        const wk = getOrCreateWeek(weekKey);
+                        wk.recurringVisits++;
+                        wk.recurringInvoices.add(invoiceNum);
+                    }
                     if (clientPaid) {
                         recurringLabor += labor;
-                        // Revenue: dedup by Invoice # (one invoice covers multiple visits)
+                        if (weekKey)
+                            getOrCreateWeek(weekKey).recurringLabor += labor;
+                        // Revenue: dedup by Invoice # — monthly
                         if (!seenPaidInvoices.has(invoiceNum)) {
                             seenPaidInvoices.add(invoiceNum);
                             recurringRevenue += parseDollarAmount(invTotal);
+                        }
+                        // Revenue: dedup by Invoice # — per-week
+                        if (weekKey) {
+                            const wk = getOrCreateWeek(weekKey);
+                            if (!wk.recurringInvoices.has(`paid:${invoiceNum}`)) {
+                                wk.recurringInvoices.add(`paid:${invoiceNum}`);
+                                wk.recurringRevenue += parseDollarAmount(invTotal);
+                            }
                         }
                     }
                     else if (!seenUnpaidInvoices.has(invoiceNum)) {
                         seenUnpaidInvoices.add(invoiceNum);
                         recurringExcluded++;
+                        if (weekKey)
+                            getOrCreateWeek(weekKey).recurringExcluded.add(invoiceNum);
                     }
                 }
             }
@@ -1072,44 +1203,45 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
             hybridRevenue, hybridLabor, hybridJobs: seenHybridJobs.size,
         });
     }
-    if (monthData.length === 0)
+    if (monthData.length === 0 && weekMap.size === 0)
         return new Map();
-    // 4. Build data rows
+    // 4a. Build marginByMonth from monthly data (used for C1 header writes — unchanged)
+    const marginByMonth = new Map();
+    for (const m of monthData) {
+        const totalRev = m.oneOffRevenue + m.recurringRevenue;
+        const totalLabor = m.oneOffLabor + m.recurringLabor;
+        const totalMargin = totalRev > 0 ? (totalRev - totalLabor) / totalRev : 0;
+        marginByMonth.set(m.month, totalMargin);
+    }
+    // 4b. Build weekly display rows for Dashboard
     //
-    // Sequential grouping — each category shows revenue, labor, margin together:
-    //
-    //  A  Month
+    // Column layout (19 cols):
+    //  A  Week ("Apr 6 – Apr 12")
     //  --- ONE-OFF (main tab, non-Hybrid) ---
-    //  B  One-off Revenue    (paid jobs only, deduped by Job#)
-    //  C  One-off Labor      (all invoiced rows)
+    //  B  One-off Revenue    (paid jobs only, deduped by Job#/Invoice# per week)
+    //  C  One-off Labor      (invoiced + paid rows)
     //  D  One-off Margin %   (rev-labor)/rev
-    //  E  # One-off Jobs     (unique Job# count, invoiced)
+    //  E  # One-off Jobs     (unique Job# count, invoiced + paid)
     //  F  # One-off Excluded (invoiced but not paid — excluded from revenue/margin)
     //  --- RECURRING (- R tabs) ---
-    //  G  Recurring Revenue  (paid invoices only, deduped by Invoice#)
-    //  H  Recurring Labor    (all invoiced rows)
+    //  G  Recurring Revenue  (paid invoices only, deduped by Invoice# per week)
+    //  H  Recurring Labor    (invoiced + paid rows)
     //  I  Recurring Margin % (rev-labor)/rev
-    //  J  # Recur. Visits    (total invoiced rows — each row = one visit)
-    //  K  # Recur. Invoices  (unique Invoice# — one invoice spans multiple visits)
-    //  L  # Recur. Excluded  (invoiced but not paid — excluded from revenue/margin)
+    //  J  # Recur. Visits    (total invoiced rows)
+    //  K  # Recur. Invoices  (unique Invoice# — includes unpaid, for context)
+    //  L  # Recur. Excluded  (unique unpaid Invoice# excluded from revenue)
     //  --- HYBRID (main tab, Division = "Hybrid") ---
     //  M  Hybrid Revenue     (paid jobs only)
-    //  N  Hybrid Labor       (all invoiced rows)
-    //  O  # Hybrid Jobs      (unique Job# count, invoiced)
+    //  N  Hybrid Labor       (invoiced + paid rows)
+    //  O  # Hybrid Jobs      (unique Job# count, invoiced + paid)
     //  --- TOTALS ---
-    //  P  Total Revenue      (one-off + recurring ONLY — hybrid excluded, different cost structure)
+    //  P  Total Revenue      (one-off + recurring ONLY — hybrid excluded)
     //  Q  Total Labor        (one-off + recurring ONLY)
     //  R  Total Gross Profit
     //  S  Total Margin %
-    //
-    // Notes:
-    //  - Recurring margin is per billing-cycle invoice (not per visit).
-    //    Divide J/K to get avg visits per invoice for per-visit context.
-    //  - Hybrid margin is not calculated (KC in-house labor not yet tracked).
-    //  - "Excluded" = invoiced rows omitted from revenue because client hasn't paid yet.
     const NUM_COLS = 19;
     const columnHeaders = [
-        "Month",
+        "Week",
         // One-off
         "One-off Revenue", "One-off Labor", "One-off Margin %",
         "# One-off Jobs", "# Excl. (One-off)",
@@ -1121,47 +1253,48 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         // Totals
         "Total Revenue", "Total Labor", "Gross Profit", "Total Margin %",
     ];
+    // Sort weeks chronologically
+    const sortedWeeks = Array.from(weekMap.values()).sort((a, b) => a.weekKey.localeCompare(b.weekKey));
     const dataRows = [];
     const ytd = {
         oneOffRev: 0, oneOffLab: 0, oneOffJobs: 0, oneOffExcl: 0,
         recurRev: 0, recurLab: 0, recurVisits: 0, recurInvoices: 0, recurExcl: 0,
         hybridRev: 0, hybridLab: 0, hybridJobs: 0,
     };
-    const marginByMonth = new Map();
-    for (const m of monthData) {
-        const oneOffMargin = m.oneOffRevenue > 0 ? (m.oneOffRevenue - m.oneOffLabor) / m.oneOffRevenue : 0;
-        const recurMargin = m.recurringRevenue > 0 ? (m.recurringRevenue - m.recurringLabor) / m.recurringRevenue : 0;
-        // Totals = one-off + recurring ONLY. Hybrid excluded (different cost structure).
-        const totalRev = m.oneOffRevenue + m.recurringRevenue;
-        const totalLabor = m.oneOffLabor + m.recurringLabor;
+    for (const wk of sortedWeeks) {
+        // Count unique jobs/invoices — filter out the "inv:" / "paid:" dedup keys
+        const oneOffJobCount = Array.from(wk.oneOffJobs).filter(j => !j.startsWith("inv:")).length;
+        const hybridJobCount = Array.from(wk.hybridJobs).filter(j => !j.startsWith("inv:")).length;
+        // recurringInvoices has both bare invoice# entries (for visit counting) and "paid:X" dedup keys
+        const bareInvoices = Array.from(wk.recurringInvoices).filter(i => !i.startsWith("paid:"));
+        const recurInvCount = bareInvoices.length;
+        const oneOffMargin = wk.oneOffRevenue > 0 ? (wk.oneOffRevenue - wk.oneOffLabor) / wk.oneOffRevenue : 0;
+        const recurMargin = wk.recurringRevenue > 0 ? (wk.recurringRevenue - wk.recurringLabor) / wk.recurringRevenue : 0;
+        const totalRev = wk.oneOffRevenue + wk.recurringRevenue;
+        const totalLabor = wk.oneOffLabor + wk.recurringLabor;
         const grossProfit = totalRev - totalLabor;
         const totalMargin = totalRev > 0 ? grossProfit / totalRev : 0;
-        marginByMonth.set(m.month, totalMargin);
         dataRows.push([
-            m.month,
-            // One-off
-            m.oneOffRevenue, m.oneOffLabor, oneOffMargin,
-            m.oneOffJobs, m.oneOffExcluded,
-            // Recurring
-            m.recurringRevenue, m.recurringLabor, recurMargin,
-            m.recurringVisits, m.recurringInvoices, m.recurringExcluded,
-            // Hybrid
-            m.hybridRevenue, m.hybridLabor, m.hybridJobs,
-            // Totals
+            wk.label,
+            wk.oneOffRevenue, wk.oneOffLabor, oneOffMargin,
+            oneOffJobCount, wk.oneOffExcluded,
+            wk.recurringRevenue, wk.recurringLabor, recurMargin,
+            wk.recurringVisits, recurInvCount, wk.recurringExcluded.size,
+            wk.hybridRevenue, wk.hybridLabor, hybridJobCount,
             totalRev, totalLabor, grossProfit, totalMargin,
         ]);
-        ytd.oneOffRev += m.oneOffRevenue;
-        ytd.oneOffLab += m.oneOffLabor;
-        ytd.oneOffJobs += m.oneOffJobs;
-        ytd.oneOffExcl += m.oneOffExcluded;
-        ytd.recurRev += m.recurringRevenue;
-        ytd.recurLab += m.recurringLabor;
-        ytd.recurVisits += m.recurringVisits;
-        ytd.recurInvoices += m.recurringInvoices;
-        ytd.recurExcl += m.recurringExcluded;
-        ytd.hybridRev += m.hybridRevenue;
-        ytd.hybridLab += m.hybridLabor;
-        ytd.hybridJobs += m.hybridJobs;
+        ytd.oneOffRev += wk.oneOffRevenue;
+        ytd.oneOffLab += wk.oneOffLabor;
+        ytd.oneOffJobs += oneOffJobCount;
+        ytd.oneOffExcl += wk.oneOffExcluded;
+        ytd.recurRev += wk.recurringRevenue;
+        ytd.recurLab += wk.recurringLabor;
+        ytd.recurVisits += wk.recurringVisits;
+        ytd.recurInvoices += recurInvCount;
+        ytd.recurExcl += wk.recurringExcluded.size;
+        ytd.hybridRev += wk.hybridRevenue;
+        ytd.hybridLab += wk.hybridLabor;
+        ytd.hybridJobs += hybridJobCount;
     }
     const ytdOneOffMargin = ytd.oneOffRev > 0 ? (ytd.oneOffRev - ytd.oneOffLab) / ytd.oneOffRev : 0;
     const ytdRecurMargin = ytd.recurRev > 0 ? (ytd.recurRev - ytd.recurLab) / ytd.recurRev : 0;
@@ -1185,7 +1318,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
     ];
     // 5. Notes rows explaining methodology (written above the data table)
     const notesRows = [
-        ["📊 Revenue & Profitability"],
+        ["📊 Revenue & Profitability (Weekly)"],
         [""],
         ["ℹ️ How numbers are calculated:"],
         ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
@@ -1227,7 +1360,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         requestBody: { values: allRows },
     });
     // 8. Formatting
-    const ytdRowIndex0 = TABLE_DATA_START - 1 + dataRows.length; // 0-based
+    const ytdRowIndex0 = TABLE_DATA_START - 1 + sortedWeeks.length; // 0-based (one row per week)
     const tableHeaderIndex0 = TABLE_HEADER_ROW - 1; // 0-based
     const tableDataStart0 = TABLE_DATA_START - 1; // 0-based
     const notesStart0 = NOTES_START_ROW - 1; // 0-based
@@ -1400,7 +1533,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         spreadsheetId,
         requestBody: { requests: formatRequests },
     });
-    console.log(`  Profitability: ${monthData.length} months written to Dashboard (one-off/hybrid/recurring split)`);
+    console.log(`  Profitability: ${sortedWeeks.length} weeks written to Dashboard (one-off/hybrid/recurring split)`);
     return marginByMonth;
 }
 /**
