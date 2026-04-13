@@ -1689,6 +1689,93 @@ export async function setupMarginCF(spreadsheetId, tabName) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
     console.log(`  setupMarginCF: ${toDelete.length} old rules removed, ${bands.length} gradient rules added on "${tabName}" col C`);
 }
+/**
+ * Set up row-level orange highlight on monthly tabs for "Client Paid but On Hold" rows.
+ * Condition: AllPaid = ✅ AND PaymentStatus = "On Hold" AND PaymentTracking = "AWAITING FOR PAYMENT"
+ * Highlights the entire row in orange (Material Orange 200) with bold text.
+ * Idempotent: removes any existing client-paid-on-hold formula rule before adding.
+ */
+export async function setupClientPaidOnHoldCF(spreadsheetId, tabName) {
+    const sheets = await getSheetsClient();
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets(properties,conditionalFormats)",
+    });
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+    if (!sheet)
+        throw new Error(`Tab "${tabName}" not found`);
+    const sheetId = sheet.properties.sheetId;
+    const cf = sheet.conditionalFormats || [];
+    // Determine column letters based on layout
+    const recurring = tabName.endsWith(" - R");
+    const layoutNew = !recurring && isNewLayout(tabName);
+    let colAllPaid, colPayStatus, colPayTracking;
+    if (recurring) {
+        // Recurring: 26 cols, no margin C — AllPaid=O, PaymentStatus=U, PaymentTracking=V
+        colAllPaid = "O";
+        colPayStatus = "U";
+        colPayTracking = "V";
+    }
+    else if (layoutNew) {
+        // New layout (March+): 39 cols with margin C — AllPaid=O, PaymentStatus=T, PaymentTracking=U
+        colAllPaid = "O";
+        colPayStatus = "T";
+        colPayTracking = "U";
+    }
+    else {
+        // Legacy one-off (Feb): 27 cols with margin C — AllPaid=P, PaymentStatus=V, PaymentTracking=W
+        colAllPaid = "P";
+        colPayStatus = "V";
+        colPayTracking = "W";
+    }
+    // Marker formula fragment to identify our rule for idempotent cleanup
+    const formulaMarker = `"On Hold"`;
+    // Remove any existing client-paid-on-hold formula rules (identified by CUSTOM_FORMULA referencing all three columns)
+    const requests = [];
+    for (let i = cf.length - 1; i >= 0; i--) {
+        const rule = cf[i];
+        const cond = rule?.booleanRule?.condition;
+        if (cond?.type === "CUSTOM_FORMULA") {
+            const formula = cond.values?.[0]?.userEnteredValue || "";
+            if (formula.includes(formulaMarker) && formula.includes("AWAITING")) {
+                requests.push({ deleteConditionalFormatRule: { sheetId, index: i } });
+            }
+        }
+    }
+    // Build the CUSTOM_FORMULA: =AND($O2="✅",$T2="On Hold",$U2="AWAITING FOR PAYMENT")
+    const formula = `=AND($${colAllPaid}2="✅",$${colPayStatus}2="On Hold",$${colPayTracking}2="AWAITING FOR PAYMENT")`;
+    // Full row range (A2:AM500 for new layout, A2:AA500 for legacy, A2:Z500 for recurring)
+    const endCol = layoutNew ? 38 : recurring ? 25 : 26; // AM=38, Z=25, AA=26
+    const cfRange = {
+        sheetId,
+        startRowIndex: 1,
+        endRowIndex: 500,
+        startColumnIndex: 0,
+        endColumnIndex: endCol + 1,
+    };
+    // Add at index 0 (highest priority) so it overrides other row-level formatting
+    requests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [cfRange],
+                booleanRule: {
+                    condition: {
+                        type: "CUSTOM_FORMULA",
+                        values: [{ userEnteredValue: formula }],
+                    },
+                    format: {
+                        backgroundColor: { red: 255 / 255, green: 204 / 255, blue: 128 / 255 }, // Material Orange 200
+                        textFormat: { bold: true },
+                    },
+                },
+            },
+            index: 0,
+        },
+    });
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    const deleted = requests.length - 1;
+    console.log(`  setupClientPaidOnHoldCF: ${deleted} old rules removed, 1 rule added on "${tabName}" (${formula})`);
+}
 export async function renameTab(spreadsheetId, from, to) {
     const sheets = await getSheetsClient();
     const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets(properties(sheetId,title))" });

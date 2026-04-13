@@ -133,4 +133,11 @@ export declare function extendTabCF(spreadsheetId: string, tabName: string, maxR
  * color-band rules: green ≥65%, yellow 40–65%, red <40%.
  */
 export declare function setupMarginCF(spreadsheetId: string, tabName: string): Promise<void>;
+/**
+ * Set up row-level orange highlight on monthly tabs for "Client Paid but On Hold" rows.
+ * Condition: AllPaid = ✅ AND PaymentStatus = "On Hold" AND PaymentTracking = "AWAITING FOR PAYMENT"
+ * Highlights the entire row in orange (Material Orange 200) with bold text.
+ * Idempotent: removes any existing client-paid-on-hold formula rule before adding.
+ */
+export declare function setupClientPaidOnHoldCF(spreadsheetId: string, tabName: string): Promise<void>;
 export declare function renameTab(spreadsheetId: string, from: string, to: string): Promise<void>;

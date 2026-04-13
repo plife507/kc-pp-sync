@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, getSheetsClient } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, getSheetsClient } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -1305,6 +1305,13 @@ export async function kcPPSync(req, res) {
                 catch (e) {
                     console.warn(`  Margin CF setup failed: ${e}`);
                 }
+            }
+            // Set up "Client Paid but On Hold" row highlight on all tabs (one-off + recurring)
+            try {
+                await setupClientPaidOnHoldCF(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+            }
+            catch (e) {
+                console.warn(`  Client-Paid-On-Hold CF setup failed: ${e}`);
             }
         }
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
