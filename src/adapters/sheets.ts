@@ -1535,15 +1535,15 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
   const columnHeaders = [
     "Week",
     // One-off
-    "One-off Revenue",    "One-off Labor",    "One-off Margin %",
+    "One-off Paid",       "One-off Labor",    "One-off Margin %",
     "# One-off Jobs",     "# Excl. (One-off)",
     // Recurring
-    "Recurring Revenue",  "Recurring Labor",  "Recurring Margin %",
+    "Recurring Paid",     "Recurring Labor",  "Recurring Margin %",
     "# Recur. Visits",    "# Recur. Invoices", "# Excl. (Recur.)",
     // Hybrid
-    "Hybrid Revenue",     "Hybrid Labor",     "# Hybrid Jobs",
+    "Hybrid Paid",        "Hybrid Labor",     "# Hybrid Jobs",
     // Totals
-    "Total Revenue (excl. Hybrid)",  "Total Labor (excl. Hybrid)",  "Gross Profit (excl. Hybrid)",  "Total Margin %",
+    "Total Paid (excl. Hybrid)",     "Total Labor (excl. Hybrid)",  "Gross Profit (excl. Hybrid)",  "Total Margin %",
   ];
 
   // Sort weeks chronologically
@@ -1618,17 +1618,17 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
 
   // 5. Notes rows explaining methodology (written above the data table)
   const notesRows: string[][] = [
-    ["📊 Cash Flow & Profitability (Weekly)"],
+    ["📊 Cash Flow & Profitability (Paid vs Unpaid — Weekly)"],
     [""],
     ["ℹ️ How numbers are calculated:"],
-    ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
+    ["  Paid       — Client-paid amounts only (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded. Jobs with $0 or blank sub invoice are also excluded."],
     ["  Labor      — Sub Invoice Amount (col P/R). Counted only when client has paid AND sub invoice amount > $0 (same gate as revenue). Jobs with $0 or blank sub invoice are excluded — sub cost not yet entered."],
     ["  One-off    — Division = 'Subcontractor - Dayshift' (or unrecognised). Revenue deduped by Job # to prevent double-counting multi-contractor jobs."],
     ["  Hybrid     — Division = 'Hybrid'. KC in-house labor + one or more PPs on the same job. ⚠️ Margin is a ceiling — KC's own cost of labor is not yet tracked (coming with Hybrid tab)."],
     ["  Recurring  — Jobs on the {Month} - R tabs. Revenue deduped by Invoice # (one billing cycle invoice covers multiple visits). # Recur. Visits = total invoiced rows; # Recur. Invoices = unique invoices. Divide visits by invoices to understand avg visits per billing cycle. Recurring margin is per-invoice — for per-visit margin, divide by visits/invoices ratio."],
     ["  Hybrid     — Division = 'Hybrid' on main tabs. Revenue and labor tracked separately; NOT included in Totals (different cost structure — KC in-house labor not tracked here). Hybrid margin TBD in a future update."],
     ["  # Excluded — Invoiced rows where the client has not yet paid. Both revenue AND labor are excluded. This shows jobs completed but not yet billable for profitability."],
-    ["  Margin %   — Shown per category (One-off, Recurring). Total Margin % = (One-off + Recurring Revenue - Labor) / Revenue. Hybrid excluded from totals."],
+    ["  Margin %   — Shown per category (One-off, Recurring). Total Margin % = (One-off + Recurring Paid - Labor) / Paid. Hybrid excluded from totals."],
     ["  Invoice gate — Uninvoiced rows are excluded from ALL calculations (revenue and labor). Division is not trusted until a job is invoiced."],
     [""],
   ];
