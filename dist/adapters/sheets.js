@@ -499,6 +499,7 @@ export async function refreshDashboard(spreadsheetId) {
                 paid: 0, paidAmount: 0,
                 goodToPay: 0, goodToPayAmount: 0,
                 onHold: 0, onHoldAmount: 0,
+                onHoldClientPaid: 0, onHoldClientPaidAmount: 0,
                 pending: 0, pendingAmount: 0,
                 noClientPay: 0, noClientPayAmount: 0,
                 blank: 0, blankAmount: 0,
@@ -540,6 +541,12 @@ export async function refreshDashboard(spreadsheetId) {
                 stats.goodToPayAmount += subAmount;
             }
             else if (statusLower === "on hold") {
+                // Check if client has already paid (AllPaid=✅ for new layout, InvoiceStatus=Paid for legacy)
+                const clientPaid = allPaidVal === "✅" || allPaidVal.toLowerCase() === "paid";
+                if (clientPaid) {
+                    stats.onHoldClientPaid++;
+                    stats.onHoldClientPaidAmount += subAmount;
+                }
                 stats.onHold++;
                 stats.onHoldAmount += subAmount;
             }
@@ -570,6 +577,7 @@ export async function refreshDashboard(spreadsheetId) {
         "# Paid", "% Paid",
         "# Good to Pay", "% Good to Pay",
         "# On Hold", "% On Hold",
+        "# On Hold (Client Paid)", "% On Hold (Client Paid)",
         "# Pending Approval", "% Pending Approval",
         "# No Client Pay", "% No Client Pay",
         "# Blank", "% Blank",
@@ -577,7 +585,7 @@ export async function refreshDashboard(spreadsheetId) {
     const pct = (n, total) => total > 0 ? n / total : 0;
     const mainRows = [mainHeader];
     // YTD accumulators
-    let ytdTotal = 0, ytdAmount = 0, ytdPaid = 0, ytdGtp = 0, ytdHold = 0, ytdPending = 0, ytdNoClient = 0, ytdBlank = 0;
+    let ytdTotal = 0, ytdAmount = 0, ytdPaid = 0, ytdGtp = 0, ytdHold = 0, ytdHoldClientPaid = 0, ytdPending = 0, ytdNoClient = 0, ytdBlank = 0;
     for (const s of sortedMonths) {
         if (s.total === 0 && s.noPaymentCount === 0)
             continue; // skip months with no data at all
@@ -588,6 +596,7 @@ export async function refreshDashboard(spreadsheetId) {
             s.paid, pct(s.paid, s.total),
             s.goodToPay, pct(s.goodToPay, s.total),
             s.onHold, pct(s.onHold, s.total),
+            s.onHoldClientPaid, pct(s.onHoldClientPaid, s.total),
             s.pending, pct(s.pending, s.total),
             s.noClientPay, pct(s.noClientPay, s.total),
             s.blank, pct(s.blank, s.total),
@@ -597,6 +606,7 @@ export async function refreshDashboard(spreadsheetId) {
         ytdPaid += s.paid;
         ytdGtp += s.goodToPay;
         ytdHold += s.onHold;
+        ytdHoldClientPaid += s.onHoldClientPaid;
         ytdPending += s.pending;
         ytdNoClient += s.noClientPay;
         ytdBlank += s.blank;
@@ -611,6 +621,7 @@ export async function refreshDashboard(spreadsheetId) {
         ytdPaid, pct(ytdPaid, ytdTotal),
         ytdGtp, pct(ytdGtp, ytdTotal),
         ytdHold, pct(ytdHold, ytdTotal),
+        ytdHoldClientPaid, pct(ytdHoldClientPaid, ytdTotal),
         ytdPending, pct(ytdPending, ytdTotal),
         ytdNoClient, pct(ytdNoClient, ytdTotal),
         ytdBlank, pct(ytdBlank, ytdTotal),
@@ -668,7 +679,7 @@ export async function refreshDashboard(spreadsheetId) {
     // 7. Write main table (rows 1-14)
     await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `'${DASHBOARD_TAB}'!A1:O${mainRows.length}`,
+        range: `'${DASHBOARD_TAB}'!A1:Q${mainRows.length}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: mainRows },
     });
@@ -678,7 +689,7 @@ export async function refreshDashboard(spreadsheetId) {
     // Header row (row 1): bold, blue bg, white text
     formatRequests.push({
         repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 15 },
+            range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 },
             cell: {
                 userEnteredFormat: {
                     backgroundColor: { red: 26 / 255, green: 115 / 255, blue: 232 / 255 },
@@ -691,7 +702,7 @@ export async function refreshDashboard(spreadsheetId) {
     // YTD row: bold, light blue bg
     formatRequests.push({
         repeatCell: {
-            range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex, endRowIndex: ytdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 15 },
+            range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex, endRowIndex: ytdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 17 },
             cell: {
                 userEnteredFormat: {
                     backgroundColor: { red: 207 / 255, green: 226 / 255, blue: 255 / 255 },
@@ -701,8 +712,9 @@ export async function refreshDashboard(spreadsheetId) {
             fields: "userEnteredFormat(backgroundColor,textFormat)",
         },
     });
-    // % columns: E(4)=% Paid, G(6)=% GTP, I(8)=% On Hold, K(10)=% Pending, M(12)=% No Client Pay, O(14)=% Blank
-    const pctCols = [4, 6, 8, 10, 12, 14];
+    // % columns: E(4)=% Paid, G(6)=% GTP, I(8)=% On Hold, K(10)=% On Hold (Client Paid),
+    //            M(12)=% Pending, O(14)=% No Client Pay, Q(16)=% Blank
+    const pctCols = [4, 6, 8, 10, 12, 14, 16];
     for (const col of pctCols) {
         formatRequests.push({
             repeatCell: {
@@ -738,12 +750,14 @@ export async function refreshDashboard(spreadsheetId) {
         { col: 6, width: 70 }, // % Good to Pay
         { col: 7, width: 70 }, // # On Hold
         { col: 8, width: 70 }, // % On Hold
-        { col: 9, width: 90 }, // # Pending Approval
-        { col: 10, width: 90 }, // % Pending Approval
-        { col: 11, width: 90 }, // # No Client Pay
-        { col: 12, width: 90 }, // % No Client Pay
-        { col: 13, width: 70 }, // # Blank
-        { col: 14, width: 70 }, // % Blank
+        { col: 9, width: 100 }, // # On Hold (Client Paid)
+        { col: 10, width: 100 }, // % On Hold (Client Paid)
+        { col: 11, width: 90 }, // # Pending Approval
+        { col: 12, width: 90 }, // % Pending Approval
+        { col: 13, width: 90 }, // # No Client Pay
+        { col: 14, width: 90 }, // % No Client Pay
+        { col: 15, width: 70 }, // # Blank
+        { col: 16, width: 70 }, // % Blank
     ];
     for (const cw of colWidths) {
         formatRequests.push({
@@ -788,6 +802,23 @@ export async function refreshDashboard(spreadsheetId) {
             });
         });
     }
+    // Orange highlight on "# On Hold (Client Paid)" column (J, index 9) when value > 0
+    // Signals money sitting in limbo: client paid but sub payment frozen
+    formatRequests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 9, endColumnIndex: 10 }],
+                booleanRule: {
+                    condition: { type: "NUMBER_GREATER", values: [{ userEnteredValue: "0" }] },
+                    format: {
+                        backgroundColor: { red: 255 / 255, green: 152 / 255, blue: 0 / 255 }, // Material Orange 500
+                        textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+                    },
+                },
+            },
+            index: 0,
+        },
+    });
     await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: { requests: formatRequests },
