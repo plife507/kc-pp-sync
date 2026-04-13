@@ -943,7 +943,7 @@ export async function kcPPSync(req, res) {
             const deleteRequests = toDelete.sort((a, b) => b - a).map((idx) => ({
                 deleteConditionalFormatRule: { sheetId, index: idx },
             }));
-            // Check what Col T (19) already has; also collect NOT_BLANK indices to delete
+            // Check what Col T (19) already has; also collect stale/bad rules to delete
             const existingColT = new Set();
             for (let i = 0; i < cf.length; i++) {
                 const rule = cf[i];
@@ -954,8 +954,13 @@ export async function kcPPSync(req, res) {
                 const cond = rule.booleanRule?.condition;
                 if (cond?.type === "TEXT_EQ")
                     existingColT.add(cond.values?.[0]?.userEnteredValue || "");
-                if (cond?.type === "CUSTOM_FORMULA")
-                    existingColT.add("FORMULA:" + (cond.values?.[0]?.userEnteredValue || ""));
+                if (cond?.type === "CUSTOM_FORMULA") {
+                    const formula = cond.values?.[0]?.userEnteredValue || "";
+                    existingColT.add("FORMULA:" + formula);
+                    // Delete stale mismatch rule that fires on every row (S != T, always true since S=$ and T=text)
+                    if (formula.includes("$S2<>") && formula.includes("$T2<>"))
+                        toDelete.push(i);
+                }
                 if (cond?.type === "NOT_BLANK")
                     toDelete.push(i); // remove NOT_BLANK — it blocks status colors
             }
