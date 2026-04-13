@@ -939,31 +939,38 @@ export async function kcPPSync(req, res) {
                         toDelete.push(i);
                 }
             }
-            // Delete in reverse order to preserve indices
-            const deleteRequests = toDelete.sort((a, b) => b - a).map((idx) => ({
-                deleteConditionalFormatRule: { sheetId, index: idx },
-            }));
-            // Check what Col T (19) already has; also collect stale/bad rules to delete
+            // Scan ALL rules: delete stale mismatch formula regardless of column range (it may cover whole row)
+            // Also collect col T (19) existing rules for idempotency check
             const existingColT = new Set();
             for (let i = 0; i < cf.length; i++) {
                 const rule = cf[i];
                 const ranges = rule.ranges || [];
+                const cond = rule.booleanRule?.condition;
+                if (!cond)
+                    continue;
+                // Delete stale mismatch formula wherever it appears — fires on every row (S=$ != T=text always)
+                if (cond.type === "CUSTOM_FORMULA") {
+                    const formula = cond.values?.[0]?.userEnteredValue || "";
+                    if (formula.includes("$S2<>") && formula.includes("$T2<>")) {
+                        toDelete.push(i);
+                        continue;
+                    }
+                }
+                // For col T specific rules: track existing + delete NOT_BLANK
                 const isColT = ranges.some((r) => r.startColumnIndex === 19 && r.endColumnIndex === 20);
                 if (!isColT)
                     continue;
-                const cond = rule.booleanRule?.condition;
-                if (cond?.type === "TEXT_EQ")
+                if (cond.type === "TEXT_EQ")
                     existingColT.add(cond.values?.[0]?.userEnteredValue || "");
-                if (cond?.type === "CUSTOM_FORMULA") {
-                    const formula = cond.values?.[0]?.userEnteredValue || "";
-                    existingColT.add("FORMULA:" + formula);
-                    // Delete stale mismatch rule that fires on every row (S != T, always true since S=$ and T=text)
-                    if (formula.includes("$S2<>") && formula.includes("$T2<>"))
-                        toDelete.push(i);
-                }
-                if (cond?.type === "NOT_BLANK")
-                    toDelete.push(i); // remove NOT_BLANK — it blocks status colors
+                if (cond.type === "CUSTOM_FORMULA")
+                    existingColT.add("FORMULA:" + (cond.values?.[0]?.userEnteredValue || ""));
+                if (cond.type === "NOT_BLANK")
+                    toDelete.push(i); // NOT_BLANK blocks status colors
             }
+            // Build delete requests AFTER all scanning so all toDelete entries are included
+            const deleteRequests = toDelete.sort((a, b) => b - a).map((idx) => ({
+                deleteConditionalFormatRule: { sheetId, index: idx },
+            }));
             // Check what Col V (21) already has for payment method
             const existingColV = new Set();
             for (const rule of cf) {
