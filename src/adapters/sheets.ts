@@ -1616,7 +1616,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId: string): Prom
 
   // 5. Notes rows explaining methodology (written above the data table)
   const notesRows: string[][] = [
-    ["📊 Revenue & Profitability (Weekly)"],
+    ["📊 Cash Flow & Profitability (Weekly)"],
     [""],
     ["ℹ️ How numbers are calculated:"],
     ["  Revenue    — Counted only when client invoice is confirmed paid (All Paid? = ✅ on main tabs; Jobber Invoice Status = Paid on recurring tabs). Unpaid, On Hold, and NO CLIENT PAY jobs are excluded from revenue."],
