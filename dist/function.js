@@ -943,9 +943,10 @@ export async function kcPPSync(req, res) {
             const deleteRequests = toDelete.sort((a, b) => b - a).map((idx) => ({
                 deleteConditionalFormatRule: { sheetId, index: idx },
             }));
-            // Check what Col T (19) already has
+            // Check what Col T (19) already has; also collect NOT_BLANK indices to delete
             const existingColT = new Set();
-            for (const rule of cf) {
+            for (let i = 0; i < cf.length; i++) {
+                const rule = cf[i];
                 const ranges = rule.ranges || [];
                 const isColT = ranges.some((r) => r.startColumnIndex === 19 && r.endColumnIndex === 20);
                 if (!isColT)
@@ -956,7 +957,7 @@ export async function kcPPSync(req, res) {
                 if (cond?.type === "CUSTOM_FORMULA")
                     existingColT.add("FORMULA:" + (cond.values?.[0]?.userEnteredValue || ""));
                 if (cond?.type === "NOT_BLANK")
-                    existingColT.add("NOT_BLANK");
+                    toDelete.push(i); // remove NOT_BLANK — it blocks status colors
             }
             // Check what Col V (21) already has for payment method
             const existingColV = new Set();
@@ -998,20 +999,7 @@ export async function kcPPSync(req, res) {
                     },
                 });
             }
-            // NOT_BLANK fallback on Col T
-            if (!existingColT.has("NOT_BLANK")) {
-                addRequests.push({
-                    addConditionalFormatRule: {
-                        rule: {
-                            ranges: [{ sheetId, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 19, endColumnIndex: 20 }],
-                            booleanRule: {
-                                condition: { type: "NOT_BLANK" },
-                                format: { backgroundColor: { red: 0.949, green: 0.949, blue: 0.949 }, backgroundColorStyle: { rgbColor: { red: 0.949, green: 0.949, blue: 0.949 } } },
-                            },
-                        },
-                    },
-                });
-            }
+            // NOT_BLANK on Col T intentionally removed — it fires before status color rules and blocks them
             // Add QBO payment method highlight to Col V if missing
             if (!existingColV.has("QBO-Billpay- ACH/Check")) {
                 addRequests.push({
