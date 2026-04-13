@@ -474,6 +474,11 @@ interface MonthStats {
   blankAmount: number;
   noPaymentCount: number;     // sub will never be paid — excluded from totals
   noPaymentAmount: number;
+  // GTP aging buckets: days since job date for Good to Pay + AWAITING FOR PAYMENT rows
+  gtp7d: number;    gtp7dAmt: number;    // 0–7 days
+  gtp14d: number;   gtp14dAmt: number;   // 8–14 days
+  gtp21d: number;   gtp21dAmt: number;   // 15–21 days
+  gtp21plus: number; gtp21plusAmt: number; // 21+ days
 }
 
 /**
@@ -605,6 +610,8 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
         noClientPay: 0, noClientPayAmount: 0,
         blank: 0, blankAmount: 0,
         noPaymentCount: 0, noPaymentAmount: 0,
+        gtp7d: 0, gtp7dAmt: 0, gtp14d: 0, gtp14dAmt: 0,
+        gtp21d: 0, gtp21dAmt: 0, gtp21plus: 0, gtp21plusAmt: 0,
       });
     }
     const stats = statsByMonth.get(monthName)!;
@@ -644,6 +651,20 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       } else if (statusLower === "good to pay") {
         stats.goodToPay++;
         stats.goodToPayAmount += subAmount;
+        // GTP aging: bucket by days since job date (col A)
+        const jobDateStr = (row[0] ?? "").toString().trim();
+        if (jobDateStr) {
+          const jobDate = new Date(jobDateStr);
+          if (!isNaN(jobDate.getTime())) {
+            const now = new Date();
+            const diffMs = now.getTime() - jobDate.getTime();
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            if (diffDays <= 7) { stats.gtp7d++; stats.gtp7dAmt += subAmount; }
+            else if (diffDays <= 14) { stats.gtp14d++; stats.gtp14dAmt += subAmount; }
+            else if (diffDays <= 21) { stats.gtp21d++; stats.gtp21dAmt += subAmount; }
+            else { stats.gtp21plus++; stats.gtp21plusAmt += subAmount; }
+          }
+        }
       } else if (statusLower === "on hold") {
         // Check if client has already paid (AllPaid=✅ for new layout, InvoiceStatus=Paid for legacy)
         const clientPaid = allPaidVal === "✅" || allPaidVal.toLowerCase() === "paid";
@@ -684,6 +705,10 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     "# Pending Approval", "% Pending Approval",
     "# No Client Pay", "% No Client Pay",
     "# Blank", "% Blank",
+    "GTP 0-7d", "$ 0-7d",
+    "GTP 8-14d", "$ 8-14d",
+    "GTP 15-21d", "$ 15-21d",
+    "GTP 21+d", "$ 21+d",
   ];
 
   const pct = (n: number, total: number) => total > 0 ? n / total : 0;
@@ -692,6 +717,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
 
   // YTD accumulators
   let ytdTotal = 0, ytdAmount = 0, ytdPaid = 0, ytdGtp = 0, ytdHold = 0, ytdHoldClientPaid = 0, ytdPending = 0, ytdNoClient = 0, ytdBlank = 0;
+  let ytdGtp7d = 0, ytdGtp7dAmt = 0, ytdGtp14d = 0, ytdGtp14dAmt = 0, ytdGtp21d = 0, ytdGtp21dAmt = 0, ytdGtp21plus = 0, ytdGtp21plusAmt = 0;
 
   for (const s of sortedMonths) {
     if (s.total === 0 && s.noPaymentCount === 0) continue; // skip months with no data at all
@@ -706,6 +732,10 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       s.pending, pct(s.pending, s.total),
       s.noClientPay, pct(s.noClientPay, s.total),
       s.blank, pct(s.blank, s.total),
+      s.gtp7d, s.gtp7dAmt,
+      s.gtp14d, s.gtp14dAmt,
+      s.gtp21d, s.gtp21dAmt,
+      s.gtp21plus, s.gtp21plusAmt,
     ]);
     ytdTotal += s.total;
     ytdAmount += s.totalAmount;
@@ -716,6 +746,10 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     ytdPending += s.pending;
     ytdNoClient += s.noClientPay;
     ytdBlank += s.blank;
+    ytdGtp7d += s.gtp7d; ytdGtp7dAmt += s.gtp7dAmt;
+    ytdGtp14d += s.gtp14d; ytdGtp14dAmt += s.gtp14dAmt;
+    ytdGtp21d += s.gtp21d; ytdGtp21dAmt += s.gtp21dAmt;
+    ytdGtp21plus += s.gtp21plus; ytdGtp21plusAmt += s.gtp21plusAmt;
   }
 
   // YTD row at row 14 (pad if needed)
@@ -731,6 +765,10 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     ytdPending, pct(ytdPending, ytdTotal),
     ytdNoClient, pct(ytdNoClient, ytdTotal),
     ytdBlank, pct(ytdBlank, ytdTotal),
+    ytdGtp7d, ytdGtp7dAmt,
+    ytdGtp14d, ytdGtp14dAmt,
+    ytdGtp21d, ytdGtp21dAmt,
+    ytdGtp21plus, ytdGtp21plusAmt,
   ]);
 
   // (No Payment section removed — covered by # Excl. columns in profitability table)
@@ -753,11 +791,11 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     dashboardSheetId = sheet?.properties?.sheetId ?? 0;
   }
 
-  // 6. Clear Dashboard tab (full width A:S to cover both old and new layouts)
+  // 6. Clear Dashboard tab (full width A:Y to cover all columns incl. GTP aging)
   try {
     await sheets.spreadsheets.values.clear({
       spreadsheetId,
-      range: `'${DASHBOARD_TAB}'!A1:S200`,
+      range: `'${DASHBOARD_TAB}'!A1:Y200`,
     });
   } catch {
     // tab may be empty
@@ -789,7 +827,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
   // 7. Write main table (rows 1-14)
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${DASHBOARD_TAB}'!A1:Q${mainRows.length}`,
+    range: `'${DASHBOARD_TAB}'!A1:Y${mainRows.length}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: mainRows },
   });
@@ -802,7 +840,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
   // Header row (row 1): bold, blue bg, white text
   formatRequests.push({
     repeatCell: {
-      range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 },
+      range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 25 },
       cell: {
         userEnteredFormat: {
           backgroundColor: { red: 26/255, green: 115/255, blue: 232/255 },
@@ -816,7 +854,7 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
   // YTD row: bold, light blue bg
   formatRequests.push({
     repeatCell: {
-      range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex, endRowIndex: ytdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 17 },
+      range: { sheetId: dashboardSheetId, startRowIndex: ytdRowIndex, endRowIndex: ytdRowIndex + 1, startColumnIndex: 0, endColumnIndex: 25 },
       cell: {
         userEnteredFormat: {
           backgroundColor: { red: 207/255, green: 226/255, blue: 255/255 },
@@ -840,14 +878,16 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     });
   }
 
-  // $ columns: C(2) and any $ in no-pay section — currency format
-  formatRequests.push({
-    repeatCell: {
-      range: { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: 2, endColumnIndex: 3 },
-      cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
-      fields: "userEnteredFormat.numberFormat",
-    },
-  });
+  // $ columns: C(2) = Total $, and aging $ columns S(18), U(20), W(22), Y(24) — currency format
+  for (const dollarCol of [2, 18, 20, 22, 24]) {
+    formatRequests.push({
+      repeatCell: {
+        range: { sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: dollarCol, endColumnIndex: dollarCol + 1 },
+        cell: { userEnteredFormat: { numberFormat: { type: "CURRENCY", pattern: "$#,##0.00" } } },
+        fields: "userEnteredFormat.numberFormat",
+      },
+    });
+  }
 
   // Frozen header row
   formatRequests.push({
@@ -876,6 +916,14 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
     { col: 14, width: 90 },  // % No Client Pay
     { col: 15, width: 70 },  // # Blank
     { col: 16, width: 70 },  // % Blank
+    { col: 17, width: 70 },  // GTP 0-7d
+    { col: 18, width: 90 },  // $ 0-7d
+    { col: 19, width: 70 },  // GTP 8-14d
+    { col: 20, width: 90 },  // $ 8-14d
+    { col: 21, width: 75 },  // GTP 15-21d
+    { col: 22, width: 90 },  // $ 15-21d
+    { col: 23, width: 70 },  // GTP 21+d
+    { col: 24, width: 90 },  // $ 21+d
   ];
   for (const cw of colWidths) {
     formatRequests.push({
@@ -939,6 +987,33 @@ export async function refreshDashboard(spreadsheetId: string): Promise<number> {
       index: 0,
     },
   });
+
+  // GTP Aging conditional formatting: color # columns when value > 0
+  // Green (0-7d), Yellow (8-14d), Orange (15-21d), Red (21+d)
+  const agingCfBands: Array<{ col: number; rgb: [number, number, number]; dark?: boolean }> = [
+    { col: 17, rgb: [129, 199, 132] },       // GTP 0-7d — Material Green 300
+    { col: 19, rgb: [255, 235, 59] },         // GTP 8-14d — Material Yellow 400
+    { col: 21, rgb: [255, 167, 38] },         // GTP 15-21d — Material Orange 400
+    { col: 23, rgb: [239, 83, 80], dark: true }, // GTP 21+d — Material Red 400
+  ];
+  for (const band of agingCfBands) {
+    // Highlight both # column and adjacent $ column (col and col+1)
+    formatRequests.push({
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, endRowIndex: mainRows.length, startColumnIndex: band.col, endColumnIndex: band.col + 2 }],
+          booleanRule: {
+            condition: { type: "CUSTOM_FORMULA", values: [{ userEnteredValue: `=${String.fromCharCode(65 + band.col)}2>0` }] },
+            format: {
+              backgroundColor: { red: band.rgb[0] / 255, green: band.rgb[1] / 255, blue: band.rgb[2] / 255 },
+              ...(band.dark ? { textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } } } : {}),
+            },
+          },
+        },
+        index: 0,
+      },
+    });
+  }
 
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
