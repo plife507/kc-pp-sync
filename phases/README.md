@@ -1,11 +1,18 @@
 # phases/
 
-Build phase documents from v1.0 initial development (March 2026).
+Historical build docs from earlier implementation work.
 
-These are historical reference only — all phases complete. Current project state is in `PROJECT-OVERVIEW.md`, `TODO.md`, and `CLAUDE.md`.
+Everything in this folder is reference material, not active planning.
+Current truth lives in:
+- `README.md`
+- `TODO.md`
+- `PROJECT-OVERVIEW.md`
+- `CLAUDE.md`
 
 | Phase | Status |
 |---|---|
-| phase-0-contract-and-scaffold.md | ✅ Complete |
-| phase-1-core-implementation.md | ✅ Complete |
-| phase-2-verification-and-handoff.md | ✅ Complete |
+| phase-0-contract-and-scaffold.md | Historical |
+| phase-1-core-implementation.md | Historical |
+| phase-2-verification-and-handoff.md | Historical |
+| margin-baseline.md | Historical |
+| margin-refactor-spec.md | Historical |

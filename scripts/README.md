@@ -1,12 +1,12 @@
 # scripts/
 
-Utility scripts for KC PP Sync setup and maintenance.
+Small support scripts for setup or maintenance.
 
 | Script | Purpose | Status |
 |---|---|---|
-| `setup-month-tabs.py` | One-time: create monthly tab structure in spreadsheet | ✅ Done |
-| `setup-command-tab.py` | One-time: create Command (sync log) tab | ✅ Done |
-| `command-tab-appscript.gs` | Legacy Apps Script for Command tab (replaced by Cloud Run logging) | Deprecated |
-| `gcloud-cleanup.sh` | Clean up old Artifact Registry images after deploys | Active |
+| `setup-month-tabs.py` | One-time spreadsheet tab setup | Historical |
+| `setup-command-tab.py` | One-time Command tab setup | Historical |
+| `command-tab-appscript.gs` | Legacy Command-tab helper | Deprecated |
+| `gcloud-cleanup.sh` | Artifact Registry cleanup after deploys | Active |
 
-For manual syncs, use the **KC Sync** sidebar menu in the spreadsheet (Apps Script) or trigger via `gcloud run jobs execute`.
+For manual syncs, use the spreadsheet sidebar or call the Cloud Run HTTP endpoint directly. Do not use `gcloud run jobs execute` for this service.

@@ -1,42 +1,31 @@
 # TODO — kc-pp-sync
 
-**Status:** ALL PHASES COMPLETE ✅
+## Status
+Stable in production. No active build sprint open.
 
-Last major work: 2026-04-10 (margin column, audit fixes, recurring GTP fix)
+Last reviewed: 2026-04-14
 
----
+## Current priorities
 
-## Completed Sprints
+### Verification / ops
+- [ ] Confirm README, PROJECT-OVERVIEW, and deployed behavior stay aligned after future releases
+- [ ] Keep GCloud revision/image cleanup light and periodic
+- [ ] Re-check HeyPros/API assumptions before any logic change tied to archived/closed visibility
 
-### Audit Fix Sprint (2026-04-09)
-Source: `AUDIT-2026-04-09.md`
-- [x] Phase 1: Critical data bugs (H-1 through H-5) — all fixed
-- [x] Phase 2: Structural fixes (dynamic tab discovery, single-pass recurring, tab guard)
-- [x] Phase 3: Infrastructure cleanup (AR prune, SM prune, scheduler accepted)
-- [x] Phase 4 partially: Tests written (61 total), stale comments updated
+### Deferred until explicitly approved
+- [ ] HeyPros write actions, including `jobLabelAttach` / `jobLabelDetach`
 
-### Margin Column (2026-04-10)
-Source: `TODO-margin-column.md`
-- [x] Column C inserted on Feb/Mar/Apr one-off tabs (NOT recurring)
-- [x] ~45 column references refactored across sheets.ts + function.ts
-- [x] Margin calculation: payment-gated, multi-contractor aware, hybrid excluded
-- [x] 10-band gradient CF on column C + Dashboard margin columns
-- [x] C1 header = weighted average from Dashboard (not simple mean)
-- [x] Dashboard CF upgraded to 10-band gradient (% Paid + margin columns)
-- [x] 0% excluded from red CF band
+### Backlog / nice-to-have
+- [ ] Consider a safe historical sync mode for 2+ months back if it becomes operationally necessary
+- [ ] Decide whether hybrid jobs should ever get a real margin model once labor cost is available
 
-### Recurring GTP Fix (2026-04-10)
-- [x] `getDashboardColIndices()` split into 3 cases (recurring/legacy/new)
-- [x] `extractGtpRows()` recurring parameter for correct column mapping
-- [x] GTP read range for recurring: A2:V500 → A2:W500
-- [x] March - R now contributes 10 GTP rows (was 0)
-- [x] Col V CF fix endpoint for misplaced status rules
+## Recently completed
+- [x] Payment dashboard live and auto-refreshing
+- [x] Profitability dashboard live
+- [x] Multi-invoice tracker shipped
+- [x] Margin column shipped on one-off tabs
+- [x] Recurring GTP merge bug fixed
+- [x] Tests green, GitHub current
 
----
-
-## Open / Deferred
-
-- [ ] HeyPros label mutations (`jobLabelAttach "PAID BY CLIENT"`) — waiting for Nathan's approval
-- [ ] No "prev-prev" scheduler mode — manual curl needed for 2+ months back
-- [ ] Hybrid margin calculation — KC in-house labor cost not yet tracked
-- [ ] VIP Email: high-urgency follow-ups posting as new top-level instead of threading
+## Rule
+Use this file only for live work. Move finished implementation detail into README or project history, not back into TODO sprawl.
