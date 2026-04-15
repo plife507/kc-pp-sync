@@ -8,7 +8,7 @@
 Stand up a fresh **local OpenClaw** environment that can operate Aya and support the `kc-pp-sync` repo without depending on the problematic cloud IP path.
 
 This handoff covers:
-- OpenClaw local setup
+- OpenClaw + Aya local setup
 - Google / GCP auth
 - Google Sheets access
 - Jobber auth + OAuth values
@@ -53,7 +53,7 @@ Use this account for:
 ### Workspace path in current OpenClaw environment
 - `/data/.openclaw/workspace/projects/kc-pp-sync`
 
-Clone this repo locally to your preferred projects folder and use that as the working directory for local OpenClaw / Claude / terminal workflows.
+Clone this repo locally to your preferred projects folder and use that as the working directory for local OpenClaw / Aya workflows.
 
 ---
 
@@ -67,16 +67,15 @@ Clone this repo locally to your preferred projects folder and use that as the wo
 
 ## Recommended local priority order
 1. local OpenClaw install
-2. Telegram/chat surface if desired
-3. Google auth (`aya@kcpowerclean.com`)
-4. gcloud auth for project `aya-gservicies`
-5. `kc-pp-sync` repo clone
-6. repo env/secrets
-7. test Google Sheets access
-8. test Cloud Run invoke
-9. test Jobber refresh
-10. test HeyPros access
-11. only then reconnect ACP / Claude Code
+2. Google auth (`aya@kcpowerclean.com`)
+3. gcloud auth for project `aya-gservicies`
+4. `kc-pp-sync` repo clone
+5. repo env/secrets
+6. test Google Sheets access
+7. test Cloud Run invoke
+8. test Jobber refresh
+9. test HeyPros access
+10. only then reconnect any optional coding-agent integrations
 
 ---
 
@@ -249,20 +248,15 @@ Add the secret values from sections 9 and 10 into your local secrets file.
 
 ## 12. OpenClaw / Aya auth notes
 
-### Current model state from cloud setup
-- main: `openai-codex/gpt-5.4`
-- aya-kc: `openai-codex/gpt-5.4`
-- aya-dev: `openai-codex/gpt-5.3-codex`
-- ACP enabled: yes
-- ACP default agent: `claude`
-
-### Current issue
-Claude ACP / Claude Code path failed from Aya with invalid API key/auth behavior.
+### Recommended local Aya setup
+- install OpenClaw clean on the local machine
+- configure Aya as the primary assistant identity
+- keep model and provider auth explicit and minimal
+- add optional coding-agent integrations only after core operations are stable
 
 ### Important note
-The live cloud process still appeared to have `ANTHROPIC_API_KEY` set in runtime even though config files showed it empty.
-
 On the fresh local install, keep auth sources clean and intentional.
+Avoid inherited or mystery environment variables from old shells, launch agents, or copied configs.
 
 ---
 
@@ -296,9 +290,9 @@ SYNC_LOOKBACK_DAYS=7
 
 ## 14. Validation checklist after setup
 
-### OpenClaw
+### OpenClaw / Aya
 - OpenClaw starts locally without plugin chaos
-- Telegram/chat surface works if desired
+- Aya loads and responds normally
 - no mystery env injection
 
 ### Google / GCP
@@ -333,7 +327,7 @@ SYNC_LOOKBACK_DAYS=7
 
 1. cloud IP path is causing too much operational noise
 2. local Google Sheets auth on cloud box is broken (`invalid_grant`)
-3. Claude ACP auth path is broken / inconsistent
+3. optional coding-agent auth paths should be reconnected carefully and verified fresh
 4. GTP generation for Feb/March returned `gtpRows: 0`
 5. recurring or burst syncs can hit `429` / `500`
 6. aging output appears inaccurate
@@ -352,7 +346,7 @@ On the new local machine:
 - verify GCP second
 - verify repo env third
 - test one tab at a time before doing broad syncs
-- only reintroduce Claude/ACP after the core data path is stable
+- only reintroduce optional coding-agent integrations after the core data path is stable
 
 ---
 
