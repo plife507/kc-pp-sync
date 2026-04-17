@@ -38,4 +38,9 @@ Sync Jobber client-payment data and HeyPros subcontractor data into the KC PP Sy
 - `README.md` — main system/operator reference
 - `TODO.md` — only active or deferred work
 - `AUDIT-2026-04-09.md` — historical audit snapshot
-- `references/HEYPROS-API-AUTHORITY.md` — HeyPros-specific reference notes
+- `references/KC-SYSTEMS-MAP.md` — how Jobber, HeyPros, browser access, APIs, and the sheet connect
+- `references/HEYPROS-REFERENCE.md` — project-safe HeyPros operational reference
+- `references/HEYPROS-API-AUTHORITY.md` — local HeyPros reference index
+- `references/jobber-schema/` — Jobber schema reference set used by this project
+- `knowledge/README.md` — imported supporting SOPs and authority docs
+- `knowledge/STACK-QUICKSTART.md` — fast orientation path for new Aya / coding workers
