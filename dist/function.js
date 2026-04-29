@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMonthTabs, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -706,6 +706,22 @@ export async function kcPPSync(req, res) {
         //   { mode: "current" }        — auto-resolve: current, current-r, prev, prev-r
         const bodyMode = req.body?.mode;
         const bodyTab = req.body?.tab;
+        if (req.body?.setupMonthTabs) {
+            const request = req.body.setupMonthTabs;
+            if (!request.month || typeof request.month !== "string") {
+                res.status(400).json({ status: "error", error: "setupMonthTabs.month is required" });
+                return;
+            }
+            const result = await setupMonthTabs(config.sheets.spreadsheetId, request.month, {
+                oneOffTemplate: request.oneOffTemplate,
+                recurringTemplate: request.recurringTemplate,
+                gtpTemplate: request.gtpTemplate,
+                replaceExisting: request.replaceExisting === true,
+            });
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            res.status(200).json({ status: "ok", elapsed: `${elapsed}s`, setupMonthTabs: result });
+            return;
+        }
         if (bodyMode && typeof bodyMode === "string") {
             const resolved = resolveMode(bodyMode);
             if (!resolved) {

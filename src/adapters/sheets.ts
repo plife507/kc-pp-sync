@@ -2280,6 +2280,166 @@ export async function setupReleasedBelowSubInvoiceCF(spreadsheetId: string, tabN
   console.log(`  setupReleasedBelowSubInvoiceCF: ${deleted} old rules removed, 1 rule added on "${tabName}" (${subCol}:${releaseCol})`);
 }
 
+export interface SetupMonthTabsOptions {
+  oneOffTemplate?: string;
+  recurringTemplate?: string;
+  gtpTemplate?: string;
+  replaceExisting?: boolean;
+}
+
+export interface SetupMonthTabsResult {
+  month: string;
+  created: string[];
+  replaced: string[];
+  skipped: string[];
+}
+
+function assertMonthName(monthName: string): void {
+  if (!MONTH_NAMES.includes(monthName)) {
+    throw new Error(`Invalid month "${monthName}". Expected one of: ${MONTH_NAMES.join(", ")}`);
+  }
+}
+
+function findSheetByTitle(meta: any, title: string): any | undefined {
+  return (meta.data.sheets ?? []).find((s: any) => s.properties?.title === title);
+}
+
+async function countMeaningfulValues(sheets: any, spreadsheetId: string, range: string): Promise<number> {
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = res.data.values ?? [];
+    let count = 0;
+    for (const row of rows) {
+      for (const cell of row) {
+        const value = String(cell ?? "").trim();
+        if (value && value.toUpperCase() !== "FALSE") count++;
+      }
+    }
+    return count;
+  } catch (e: any) {
+    if (String(e?.message ?? "").includes("Unable to parse range")) return 0;
+    throw e;
+  }
+}
+
+async function deleteExistingEmptyTab(
+  sheets: any,
+  spreadsheetId: string,
+  tabName: string,
+  safetyRanges: string[],
+): Promise<boolean> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties(sheetId,title)",
+  });
+  const sheet = findSheetByTitle(meta, tabName);
+  if (!sheet) return false;
+
+  for (const range of safetyRanges) {
+    const count = await countMeaningfulValues(sheets, spreadsheetId, range);
+    if (count > 0) {
+      throw new Error(`Refusing to replace "${tabName}": found ${count} existing value(s) in ${range}`);
+    }
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: { requests: [{ deleteSheet: { sheetId: sheet.properties!.sheetId! } }] },
+  });
+  return true;
+}
+
+async function duplicateTemplateTab(
+  sheets: any,
+  spreadsheetId: string,
+  templateTab: string,
+  newTab: string,
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties(sheetId,title,index)",
+  });
+  const source = findSheetByTitle(meta, templateTab);
+  if (!source) throw new Error(`Template tab "${templateTab}" not found`);
+
+  const duplicate = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        duplicateSheet: {
+          sourceSheetId: source.properties!.sheetId!,
+          insertSheetIndex: (source.properties!.index ?? 0) + 1,
+          newSheetName: newTab,
+        },
+      }],
+    },
+  });
+  const newSheetId = duplicate.data.replies?.[0]?.duplicateSheet?.properties?.sheetId;
+  if (newSheetId == null) throw new Error(`Duplicate of "${templateTab}" did not return a sheetId`);
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        updateSheetProperties: {
+          properties: { sheetId: newSheetId, hidden: false },
+          fields: "hidden",
+        },
+      }],
+    },
+  });
+}
+
+export async function setupMonthTabs(
+  spreadsheetId: string,
+  monthName: string,
+  options: SetupMonthTabsOptions = {},
+): Promise<SetupMonthTabsResult> {
+  assertMonthName(monthName);
+  const sheets = await getSheetsClient();
+  const oneOffTab = monthName;
+  const recurringTab = `${monthName} - R`;
+  const gtpTab = `${monthName} - GTP $`;
+  const oneOffTemplate = options.oneOffTemplate ?? "April";
+  const recurringTemplate = options.recurringTemplate ?? "April - R";
+  const gtpTemplate = options.gtpTemplate ?? "April - GTP $";
+  const result: SetupMonthTabsResult = { month: monthName, created: [], replaced: [], skipped: [] };
+
+  const targets = [
+    { tab: oneOffTab, template: oneOffTemplate, clearRange: `'${oneOffTab}'!A2:AO1000`, safetyRanges: [`'${oneOffTab}'!F2:G1000`] },
+    { tab: recurringTab, template: recurringTemplate, clearRange: `'${recurringTab}'!A2:Z1000`, safetyRanges: [`'${recurringTab}'!F2:F1000`] },
+    { tab: gtpTab, template: gtpTemplate, clearRange: `'${gtpTab}'!A2:I1000`, safetyRanges: [`'${gtpTab}'!A2:I1000`] },
+  ];
+
+  for (const target of targets) {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets.properties(title)" });
+    const exists = Boolean(findSheetByTitle(meta, target.tab));
+    if (exists && !options.replaceExisting) {
+      result.skipped.push(target.tab);
+      continue;
+    }
+    if (exists) {
+      const replaced = await deleteExistingEmptyTab(sheets, spreadsheetId, target.tab, target.safetyRanges);
+      if (replaced) result.replaced.push(target.tab);
+    }
+
+    await duplicateTemplateTab(sheets, spreadsheetId, target.template, target.tab);
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: target.clearRange });
+    result.created.push(target.tab);
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${oneOffTab}'!C1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [["Margin %"]] },
+  });
+
+  await assertSourceTabLayout(spreadsheetId, oneOffTab);
+  await assertSourceTabLayout(spreadsheetId, recurringTab);
+  return result;
+}
+
 export async function renameTab(spreadsheetId: string, from: string, to: string): Promise<void> {
   const sheets = await getSheetsClient();
   const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "sheets(properties(sheetId,title))" });

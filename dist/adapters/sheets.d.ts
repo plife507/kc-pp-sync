@@ -153,4 +153,17 @@ export declare function setupClientPaidOnHoldCF(spreadsheetId: string, tabName: 
  */
 export declare function buildReleasedBelowSubInvoiceFormula(subCol: string, releaseCol: string): string;
 export declare function setupReleasedBelowSubInvoiceCF(spreadsheetId: string, tabName: string): Promise<void>;
+export interface SetupMonthTabsOptions {
+    oneOffTemplate?: string;
+    recurringTemplate?: string;
+    gtpTemplate?: string;
+    replaceExisting?: boolean;
+}
+export interface SetupMonthTabsResult {
+    month: string;
+    created: string[];
+    replaced: string[];
+    skipped: string[];
+}
+export declare function setupMonthTabs(spreadsheetId: string, monthName: string, options?: SetupMonthTabsOptions): Promise<SetupMonthTabsResult>;
 export declare function renameTab(spreadsheetId: string, from: string, to: string): Promise<void>;
