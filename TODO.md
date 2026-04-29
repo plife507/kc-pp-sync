@@ -1,31 +1,34 @@
 # TODO — kc-pp-sync
 
 ## Status
-Stable in production. No active build sprint open.
 
-Last reviewed: 2026-04-14
+Stable in production. Repo cleanup is the current prep step before May tab/dashboard work.
 
-## Current priorities
+Last reviewed: 2026-04-29
 
-### Verification / ops
-- [ ] Confirm README, PROJECT-OVERVIEW, and deployed behavior stay aligned after future releases
-- [ ] Keep GCloud revision/image cleanup light and periodic
-- [ ] Re-check HeyPros/API assumptions before any logic change tied to archived/closed visibility
+## Current Priorities
 
-### Deferred until explicitly approved
-- [ ] HeyPros write actions, including `jobLabelAttach` / `jobLabelDetach`
+- [ ] Plan and implement May one-off/recurring/GTP tab support.
+- [ ] Update Dashboard/profitability logic for May once tab shape is confirmed.
+- [ ] Keep README, CLAUDE.md, and deployed behavior aligned after releases.
+- [ ] Keep GCloud revision/image cleanup light and periodic.
+- [ ] Re-check HeyPros/API assumptions before any logic change tied to archived/closed visibility.
 
-### Backlog / nice-to-have
-- [ ] Consider a safe historical sync mode for 2+ months back if it becomes operationally necessary
-- [ ] Decide whether hybrid jobs should ever get a real margin model once labor cost is available
+## Deferred Until Explicitly Approved
 
-## Recently completed
-- [x] Payment dashboard live and auto-refreshing
-- [x] Profitability dashboard live
-- [x] Multi-invoice tracker shipped
-- [x] Margin column shipped on one-off tabs
-- [x] Recurring GTP merge bug fixed
-- [x] Tests green, GitHub current
+- [ ] HeyPros write actions, including `jobLabelAttach` / `jobLabelDetach`.
+- [ ] A real hybrid-job margin model once labor cost is available and approved.
+
+## Recently Completed
+
+- [x] Removed deprecated one-time setup helpers from `scripts/`.
+- [x] Updated docs to avoid stale Cloud Run revision claims.
+- [x] Payment dashboard live and auto-refreshing.
+- [x] Profitability dashboard live.
+- [x] Multi-invoice tracker shipped.
+- [x] Margin column shipped on one-off tabs.
+- [x] Recurring GTP merge bug fixed.
 
 ## Rule
-Use this file only for live work. Move finished implementation detail into README or project history, not back into TODO sprawl.
+
+Use this file only for live work. Move finished implementation detail into README, project overview, or historical notes instead of adding TODO sprawl.

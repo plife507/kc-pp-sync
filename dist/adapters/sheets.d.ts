@@ -74,7 +74,7 @@ export interface SyncLogEntry {
     error: string;
 }
 /**
- * Append a sync result row to the Command tab.
+ * Append a sync result row to the Log tab.
  * Creates the tab with headers if it doesn't exist.
  */
 export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void>;
@@ -140,4 +140,9 @@ export declare function setupMarginCF(spreadsheetId: string, tabName: string): P
  * Idempotent: removes any existing client-paid-on-hold formula rule before adding.
  */
 export declare function setupClientPaidOnHoldCF(spreadsheetId: string, tabName: string): Promise<void>;
+/**
+ * Highlight amount cells when KCPC released amount is lower than sub invoice.
+ */
+export declare function buildReleasedBelowSubInvoiceFormula(subCol: string, releaseCol: string): string;
+export declare function setupReleasedBelowSubInvoiceCF(spreadsheetId: string, tabName: string): Promise<void>;
 export declare function renameTab(spreadsheetId: string, from: string, to: string): Promise<void>;

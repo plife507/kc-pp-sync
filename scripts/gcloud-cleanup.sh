@@ -1,62 +1,76 @@
 #!/usr/bin/env bash
-# =============================================================================
-# KC PP Sync — GCloud Free Tier Cleanup
-# =============================================================================
-# Keeps artifact registry and secret manager within free tier limits.
-# Safe to run anytime — preserves the latest image and active secret versions.
+# KC PP Sync - GCloud cleanup helper.
+#
+# Dry-run by default. Artifact cleanup is scoped to the kc-pp-sync image.
+# Secret cleanup is opt-in because secrets are shared operational state.
 #
 # Usage:
-#   ./scripts/gcloud-cleanup.sh              # dry run (shows what would be deleted)
-#   ./scripts/gcloud-cleanup.sh --execute    # actually delete
-#
-# Schedule with cron for automatic maintenance.
-# =============================================================================
+#   ./scripts/gcloud-cleanup.sh
+#   ./scripts/gcloud-cleanup.sh --execute
+#   ./scripts/gcloud-cleanup.sh --include-secrets
+#   ./scripts/gcloud-cleanup.sh --execute --include-secrets
 
 set -euo pipefail
 
 PROJECT="aya-gservicies"
-REGION="us-central1"
 REPO="gcf-artifacts"
-IMAGE_PATH="us-central1-docker.pkg.dev/${PROJECT}/${REPO}/aya--gservicies__us--central1__kc--pp--sync"
-KEEP_IMAGES=3  # keep the 3 most recent images
+IMAGE_PATH="us-central1-docker.pkg.dev/${PROJECT}/${REPO}/kc-pp-sync"
+KEEP_IMAGES=3
 
 DRY_RUN=true
-if [[ "${1:-}" == "--execute" ]]; then
-  DRY_RUN=false
-fi
+INCLUDE_SECRETS=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --execute) DRY_RUN=false ;;
+    --include-secrets) INCLUDE_SECRETS=true ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+count_lines() {
+  grep -c . 2>/dev/null || true
+}
+
+mode_label() {
+  if $DRY_RUN; then
+    echo "DRY RUN"
+  else
+    echo "EXECUTE"
+  fi
+}
 
 echo "================================================"
-echo "  GCloud Free Tier Cleanup — KC PP Sync"
+echo "  GCloud Cleanup - KC PP Sync"
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
-echo "  Mode: $(if $DRY_RUN; then echo 'DRY RUN'; else echo 'EXECUTE'; fi)"
+echo "  Mode: $(mode_label)"
 echo "================================================"
 echo ""
 
-# -------------------------------------------------------
-# 1. Artifact Registry — delete old container images
-# -------------------------------------------------------
-echo "📦 Artifact Registry Cleanup"
-echo "   Keeping newest ${KEEP_IMAGES} images, deleting the rest"
+echo "Artifact Registry Cleanup"
+echo "   Image: ${IMAGE_PATH}"
+echo "   Keeping newest ${KEEP_IMAGES} images"
 echo ""
 
-# Get all image digests sorted by create time (newest first)
 ALL_DIGESTS=$(gcloud artifacts docker images list "$IMAGE_PATH" \
   --project="$PROJECT" \
   --sort-by=~CREATE_TIME \
   --format="value(DIGEST)" 2>/dev/null | grep -v "cache" || true)
 
-TOTAL=$(echo "$ALL_DIGESTS" | grep -c . || echo 0)
+TOTAL=$(echo "$ALL_DIGESTS" | count_lines)
 echo "   Total images: ${TOTAL}"
 
 if [[ $TOTAL -le $KEEP_IMAGES ]]; then
-  echo "   ✅ Already clean (≤${KEEP_IMAGES} images)"
+  echo "   Already clean"
 else
   DELETE_COUNT=$((TOTAL - KEEP_IMAGES))
-  echo "   🗑  Will delete: ${DELETE_COUNT} old images"
-  
-  # Skip the first KEEP_IMAGES, delete the rest
+  echo "   Will delete: ${DELETE_COUNT} old images"
+
   DIGESTS_TO_DELETE=$(echo "$ALL_DIGESTS" | tail -n +"$((KEEP_IMAGES + 1))")
-  
+
   while IFS= read -r digest; do
     if [[ -z "$digest" ]]; then continue; fi
     if $DRY_RUN; then
@@ -65,63 +79,60 @@ else
       echo "   Deleting: ${digest:0:20}..."
       gcloud artifacts docker images delete "${IMAGE_PATH}@${digest}" \
         --project="$PROJECT" \
-        --quiet --delete-tags 2>/dev/null || echo "   ⚠️  Failed to delete ${digest:0:20}"
+        --quiet --delete-tags 2>/dev/null || echo "   Failed to delete ${digest:0:20}"
     fi
   done <<< "$DIGESTS_TO_DELETE"
 fi
 
-# Also clean cache images
-CACHE_PATH="${IMAGE_PATH}/cache"
-CACHE_DIGESTS=$(gcloud artifacts docker images list "$CACHE_PATH" \
-  --project="$PROJECT" \
-  --format="value(DIGEST)" 2>/dev/null || true)
-CACHE_COUNT=$(echo "$CACHE_DIGESTS" | grep -c . 2>/dev/null || echo 0)
+echo ""
 
-if [[ $CACHE_COUNT -gt 0 ]]; then
+if ! $INCLUDE_SECRETS; then
+  echo "Secret Manager Cleanup"
+  echo "   Skipped. Pass --include-secrets to dry-run secret-version cleanup."
   echo ""
-  echo "   🗑  Cache images: ${CACHE_COUNT}"
-  while IFS= read -r digest; do
-    if [[ -z "$digest" ]]; then continue; fi
-    if $DRY_RUN; then
-      echo "   [DRY RUN] Would delete cache: ${digest:0:20}..."
-    else
-      echo "   Deleting cache: ${digest:0:20}..."
-      gcloud artifacts docker images delete "${CACHE_PATH}@${digest}" \
-        --project="$PROJECT" \
-        --quiet --delete-tags 2>/dev/null || echo "   ⚠️  Failed to delete cache"
-    fi
-  done <<< "$CACHE_DIGESTS"
+  echo "================================================"
+  if $DRY_RUN; then
+    echo "  DRY RUN complete. Run with --execute to apply artifact cleanup."
+  else
+    echo "  Cleanup complete."
+  fi
+  echo "================================================"
+  exit 0
 fi
 
+echo "Secret Manager Cleanup"
+echo "   Scope: kc-pp-sync runtime secrets only"
+echo "   Keeping highest-numbered enabled version per secret"
 echo ""
 
-# -------------------------------------------------------
-# 2. Secret Manager — disable old versions
-# -------------------------------------------------------
-echo "🔐 Secret Manager Cleanup"
-echo "   Disabling old versions (keeping latest active)"
-echo ""
-
-SECRETS=$(gcloud secrets list --project="$PROJECT" --format="value(name)" 2>/dev/null)
+PP_SECRETS=(
+  HEYPROS_EMAIL
+  HEYPROS_PASSWORD
+  JOBBER_ACCESS_TOKEN
+  JOBBER_CLIENT_ID
+  JOBBER_CLIENT_SECRET
+  JOBBER_REFRESH_TOKEN
+  TELEGRAM_BOT_TOKEN
+)
 
 DISABLED_COUNT=0
-for secret in $SECRETS; do
-  # Get all enabled versions except the latest
+for secret in "${PP_SECRETS[@]}"; do
+  if ! gcloud secrets describe "$secret" --project="$PROJECT" >/dev/null 2>&1; then
+    echo "   Missing secret, skipping: ${secret}"
+    continue
+  fi
+
   VERSIONS=$(gcloud secrets versions list "$secret" \
     --project="$PROJECT" \
     --filter="state=ENABLED" \
-    --sort-by=~name \
-    --format="value(name)" 2>/dev/null)
-  
-  VERSION_COUNT=$(echo "$VERSIONS" | grep -c . 2>/dev/null || echo 0)
-  
+    --format="value(name)" 2>/dev/null | sort -nr || true)
+
+  VERSION_COUNT=$(echo "$VERSIONS" | count_lines)
   if [[ $VERSION_COUNT -le 1 ]]; then
-    continue  # only 1 version, skip
+    continue
   fi
-  
-  # Skip the first (latest), disable the rest
+
   OLD_VERSIONS=$(echo "$VERSIONS" | tail -n +2)
-  
   while IFS= read -r ver; do
     if [[ -z "$ver" ]]; then continue; fi
     if $DRY_RUN; then
@@ -129,14 +140,14 @@ for secret in $SECRETS; do
     else
       echo "   Disabling: ${secret} v${ver}"
       gcloud secrets versions disable "$ver" --secret="$secret" \
-        --project="$PROJECT" --quiet 2>/dev/null || echo "   ⚠️  Failed"
+        --project="$PROJECT" --quiet 2>/dev/null || echo "   Failed to disable ${secret} v${ver}"
     fi
     DISABLED_COUNT=$((DISABLED_COUNT + 1))
   done <<< "$OLD_VERSIONS"
 done
 
 if [[ $DISABLED_COUNT -eq 0 ]]; then
-  echo "   ✅ Already clean (no old versions)"
+  echo "   Already clean"
 fi
 
 echo ""
@@ -144,6 +155,6 @@ echo "================================================"
 if $DRY_RUN; then
   echo "  DRY RUN complete. Run with --execute to apply."
 else
-  echo "  ✅ Cleanup complete!"
+  echo "  Cleanup complete."
 fi
 echo "================================================"

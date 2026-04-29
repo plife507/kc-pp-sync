@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { AUTO_COL_LETTERS_LEGACY, AUTO_COL_LETTERS_NEW } from "../src/adapters/sheets.js";
+import {
+  AUTO_COL_LETTERS_LEGACY,
+  AUTO_COL_LETTERS_NEW,
+  buildReleasedBelowSubInvoiceFormula,
+} from "../src/adapters/sheets.js";
 
 describe("AUTO_COL_LETTERS_LEGACY", () => {
   it("contains shifted auto columns: F,H,I,J,K,L,M,N,O,P,Q,R,S,U,AA", () => {
@@ -45,6 +49,15 @@ describe("AUTO_COL_LETTERS_NEW", () => {
     for (const col of ["B", "G", "R", "T", "U", "V", "W", "X"]) {
       assert.equal(AUTO_COL_LETTERS_NEW.has(col), false, `expected ${col} NOT to be in AUTO_COL_LETTERS_NEW`);
     }
+  });
+});
+
+describe("buildReleasedBelowSubInvoiceFormula", () => {
+  it("normalizes numeric and currency-text amount cells before comparing", () => {
+    assert.equal(
+      buildReleasedBelowSubInvoiceFormula("Q", "R"),
+      '=AND(IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0)>0,LEN($R2&"")>0,IFERROR(VALUE(REGEXREPLACE(TO_TEXT($R2),"[^0-9.-]","")),0)<IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0))',
+    );
   });
 });
 
@@ -446,7 +459,7 @@ describe("parseTabMonth", () => {
     assert.deepEqual(r, { month: 11, year: 2026 });
   });
 
-  it("returns null for Command tab", () => {
+  it("returns null for Command UI tab", () => {
     assert.equal(parseTabMonth("⚡ Command"), null);
   });
 

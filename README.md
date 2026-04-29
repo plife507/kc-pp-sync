@@ -1,57 +1,55 @@
 # kc-pp-sync
 
-**v3.1.0** · Automated sync service for KC Power Clean. Pulls job and invoice data from Jobber and HeyPros, writes structured records to Google Sheets, and maintains real-time payment + profitability dashboards.
+KC Power Clean's PP sheet sync service. It pulls Jobber client-payment data and HeyPros subcontractor data, writes the KC PP Sync spreadsheet, and refreshes Dashboard/GTP/profitability views.
 
-## What it does
+## Production
 
-- Fetches all jobs for the current and previous month from Jobber + HeyPros
-- Matches HeyPros work orders to Jobber jobs by WO# (`purchaseOrder`), including multi-value PO fields
-- Writes one row per HeyPros WO to the appropriate month tab in the KC PP Sync spreadsheet
-- Auto-populates: job status, client name, division, invoice data, sub invoice amount, payment status, **per-row margin %**, auto notes
-- Maintains a **Dashboard** tab with payment status aggregates + profitability metrics (Feb–present)
-- Maintains **GTP $** tabs (Good to Pay output per month, merging one-off + recurring)
-- Computes **margin %** per row: `(Total Invoiced − Sub Invoice Amounts) / Total Invoiced`
-- Logs every sync result to the **Command** tab
-- Refreshes Jobber OAuth tokens automatically via Secret Manager
+- Runtime: Cloud Run service `kc-pp-sync`
+- Project/region: `aya-gservicies` / `us-central1`
+- Sheet: `KC PP Sync` (`1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q`)
+- Sources: Jobber GraphQL, HeyPros GraphQL
+- Auth: Cloud Run requires an identity token
+- Deploy path: `gcloud run deploy kc-pp-sync --source .`
 
-## Sheet architecture
+Check live state instead of trusting stale revision notes:
 
-| Tab type | Example | Layout | Cols | Notes |
-|---|---|---|---|---|
-| One-off (new) | `March`, `April` | New one-off | 40 (A–AN) | Margin col C, 5-slot invoice tracker Z–AN |
-| One-off (legacy) | `February` | Legacy one-off | 27 (A–AA) | Margin col C inserted, single invoice |
-| Recurring | `March - R`, `April - R` | Recurring | 26 (A–Z) | **No margin col C**. Manual: A, F, L |
-| GTP $ | `March - GTP $` | GTP output | 9 | Merged one-off + recurring |
-| Dashboard | `Dashboard` | Dashboard | 15 + profitability | Payment status + margin by month |
-| Command | `Command` | Sync log | 8 | Every sync appended |
+```bash
+gcloud run services describe kc-pp-sync --region us-central1 --project aya-gservicies
 
-### ⚠️ Column layout warning
+gcloud run revisions list --service kc-pp-sync --region us-central1 --project aya-gservicies --limit=8
 
-Recurring tabs do NOT have margin column C. This means all column indices on recurring tabs are offset by -1 compared to legacy one-off tabs. Code must branch on all three layouts (new / legacy / recurring).
+gcloud scheduler jobs list --location us-central1 --project aya-gservicies
+```
 
-## Deployment
+## What It Does
 
-Runs as a **Google Cloud Run** service (`kc-pp-sync`, project `aya-gservicies`, region `us-central1`).
+- Syncs current, previous, and older month one-off tabs.
+- Syncs current and previous recurring tabs.
+- Matches HeyPros WOs to Jobber jobs through `purchaseOrder`, including multi-value PO fields.
+- Writes one row per matched HeyPros WO.
+- Preserves manual payment columns while refreshing generated columns.
+- Refreshes monthly `GTP $` tabs, `Dashboard`, and profitability sections.
+- Logs sync runs to the `Log` tab.
+- Refreshes Jobber OAuth tokens through Secret Manager.
 
-**Current revision:** `kc-pp-sync-00091-zxv` (512 MiB, 0.1666 vCPU)
+## Sheet Layouts
 
-Four **Cloud Scheduler** jobs trigger hourly syncs:
+| Tab family | Examples | Columns | Key rule |
+|---|---|---:|---|
+| New one-off | `March`, `April`, `May` | 40, A-AN | Has margin col C and 5-slot invoice tracker Z-AN |
+| Legacy one-off | `February` | 27, A-AA | Has margin col C but single-invoice layout |
+| Recurring | `March - R`, `April - R` | 26, A-Z | No margin col C; indices are shifted from one-off tabs |
+| GTP output | `April - GTP $` | 9 | Generated from one-off + recurring source tabs |
+| Dashboard | `Dashboard` | varies | Generated summary/profitability output |
+| Sync log | `Log` | 8 | Appended after each sync |
+| Command UI | `⚡ Command` | varies | In-sheet command center, not the sync log |
 
-| Job | Schedule | Mode | Tab |
-|---|---|---|---|
-| `kc-pp-sync-hourly` | every hour :00 | `current` | Current month one-off |
-| `kc-pp-sync-recurring` | every hour :05 | `current-r` | Current month recurring |
-| `kc-pp-sync-prev-month` | every 4h :10 | `prev` | Previous month one-off |
-| `kc-pp-sync-prev-recurring` | every 4h :15 | `prev-r` | Previous month recurring |
+The recurring/no-margin difference is the main footgun. Any read/write logic that touches columns must branch across new one-off, legacy one-off, and recurring layouts.
 
-**GTP $ tabs and Dashboard auto-refresh** at the end of every sync — no separate scheduler jobs needed.
+## Sync API
 
-## Manual sync
+Manual syncs use authenticated POSTs to Cloud Run.
 
-### Apps Script sidebar (in-sheet)
-Open the KC PP Sync spreadsheet → **KC Sync** menu → pick a sync target.
-
-### Direct API call
 ```bash
 TOKEN=$(gcloud auth print-identity-token)
 curl -X POST https://kc-pp-sync-823212137840.us-central1.run.app \
@@ -60,35 +58,53 @@ curl -X POST https://kc-pp-sync-823212137840.us-central1.run.app \
   -d '{"mode":"current"}'
 ```
 
-**Mode values:** `current`, `current-r`, `prev`, `prev-r`
+Supported modes:
 
-To sync a specific tab by name:
+- `current` — current month one-off tab
+- `current-r` — current month recurring tab
+- `prev` — previous month one-off tab
+- `prev-r` — previous month recurring tab
+- `dashboard` — dashboard/profitability refresh only
+- `all-prev` — older one-off tabs before previous month
+
+Exact tab targeting is also supported:
+
 ```bash
--d '{"tab":"February"}'
+-d '{"tab":"April"}'
+-d '{"tab":"April - R"}'
 ```
 
-## Margin calculation
+## Scheduler
 
-**Per-row:** `(Total Invoiced − SUM of all Sub Invoice Amounts for same Job#) / Total Invoiced`
+| Job | Schedule | Mode |
+|---|---|---|
+| `kc-pp-sync-hourly` | `*/20 * * * *` | `current` |
+| `kc-pp-sync-recurring` | `5,25,45 * * * *` | `current-r` |
+| `kc-pp-sync-prev-month` | `10,30,50 * * * *` | `prev` |
+| `kc-pp-sync-prev-recurring` | `15,35,55 * * * *` | `prev-r` |
+| `kc-pp-sync-dashboard` | `18,38,58 * * * *` | `dashboard` |
+| `kc-pp-sync-older` | `0 */4 * * *` | `all-prev` |
 
-- Multi-contractor jobs: all rows for same Job# show identical combined margin
-- Payment gate: only computed when client has paid (AllPaid=✅ or InvoiceStatus="Paid")
-- Unpaid/uninvoiced/hybrid → blank
-- C1 header shows weighted average margin from Dashboard
-- 10-band gradient CF (deep green ≥90% → deep red <10%)
-- **Not on recurring tabs** (no column C)
+GTP tabs and Dashboard refresh also run after normal tab syncs. The dashboard job is a lightweight refresh lane.
 
-## Local development
+## Development
 
 ```bash
-cd projects/kc-pp-sync
 npm install
 npm run build
-npm test          # 61 tests
+npm test
 ```
 
-Deploy:
+Current test shape: `test/output-sheet.test.ts` covers layout columns, manual-column protection, multi-invoice behavior, auto-notes, round-robin WO matching, PO parsing, margin calculations, and conditional-format formula generation.
+
+`dist/` is tracked because deploy uses a no-op `gcp-build` script. Build before committing source changes.
+
+## Deploy
+
 ```bash
+npm run build
+npm test
+
 gcloud run deploy kc-pp-sync \
   --source . \
   --region us-central1 \
@@ -96,23 +112,23 @@ gcloud run deploy kc-pp-sync \
   --no-allow-unauthenticated
 ```
 
-## Architecture
+After deploy, verify the latest ready revision, traffic, a safe endpoint call, and recent Cloud Run logs.
 
-```
-src/
-  function.ts           — Cloud Run HTTP handler, mode routing, sync orchestration, margin calc
-  adapters/
-    heypros.ts          — HeyPros GraphQL auth, token caching, paginated fetch
-    jobber.ts           — Jobber GraphQL + OAuth auto-refresh via Secret Manager
-    sheets.ts           — All Sheets read/write: sync, GTP, Dashboard, Profitability, CF, Command log
-  config/
-    constants.ts        — Layout column maps, header definitions (40-col new, 27-col legacy)
-    env.ts              — Environment config, Secret Manager, mode resolution
-    types.ts            — Shared TypeScript interfaces
-test/
-  output-sheet.test.ts  — 61 tests: columns, margin, auto-notes, round-robin, PO parsing
-```
+## Active Support Files
 
-## Spreadsheet
+- `src/function.ts` — HTTP handler, mode routing, orchestration, margin computation.
+- `src/adapters/sheets.ts` — sheet reads/writes, GTP, Dashboard, profitability, CF, sync logging.
+- `src/adapters/jobber.ts` — Jobber GraphQL + OAuth token refresh.
+- `src/adapters/heypros.ts` — HeyPros auth, token cache, paginated job fetch.
+- `src/config/constants.ts` — headers and layout maps.
+- `apps-script/sync-button.gs` — active in-sheet Apps Script menu.
+- `scripts/gcloud-cleanup.sh` — dry-run-first Artifact Registry and Secret Manager cleanup.
+- `TODO.md` — active/deferred work only.
 
-**KC PP Sync** — `1p4lxIUjWFYNDp6ptqSMwyRcdle5Hcv5UMC6TdpZE99Q`
+## Boundaries
+
+- Do not auto-write manual columns.
+- Do not add margin column C to recurring tabs.
+- Do not change `gcp-build` away from `true` unless the deploy model changes.
+- Do not make HeyPros writes unless Nathan explicitly approves them.
+- Do not commit local secrets or private notes.

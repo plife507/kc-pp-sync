@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, getSheetsClient } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -724,7 +724,7 @@ export async function kcPPSync(req, res) {
                     gtpRows: 0,
                     elapsed: `${elapsed}s`,
                     error: "",
-                }).catch((e) => console.warn(`  Command log failed: ${e}`));
+                }).catch((e) => console.warn(`  Sync log failed: ${e}`));
                 res.status(200).json({ status: "ok", elapsed: `${elapsed}s`, mode: "dashboard", totalJobs: dashCount });
                 return;
             }
@@ -843,7 +843,7 @@ export async function kcPPSync(req, res) {
                     gtpRows: 0,
                     elapsed: `${elapsed}s`,
                     error: "",
-                }).catch((e) => console.warn(`  Command log failed: ${e}`));
+                }).catch((e) => console.warn(`  Sync log failed: ${e}`));
                 res.status(200).json({
                     status: "ok",
                     elapsed: `${elapsed}s`,
@@ -858,9 +858,9 @@ export async function kcPPSync(req, res) {
             console.log(`  Mode '${bodyMode}' → tab '${resolved}'`);
         }
         else if (bodyTab && typeof bodyTab === "string") {
-            // Guard: reject GTP, Dashboard, and Command tabs as sync targets
+            // Guard: reject generated/system tabs as sync targets.
             const lowerTab = bodyTab.toLowerCase();
-            if (lowerTab.includes("gtp") || lowerTab === "dashboard" || lowerTab === "command") {
+            if (lowerTab.includes("gtp") || lowerTab === "dashboard" || lowerTab === "log" || lowerTab.includes("command")) {
                 res.status(400).json({ status: "error", error: `Tab "${bodyTab}" is a derived/system tab and cannot be synced directly.` });
                 return;
             }
@@ -936,8 +936,8 @@ export async function kcPPSync(req, res) {
                 fields: "sheets.properties",
             });
             const allTabs = (meta.data.sheets ?? []).map((s) => s.properties?.title).filter(Boolean);
-            // Only new-layout one-off month tabs (not " - R", not " - GTP $", not Dashboard, not Command)
-            const monthTabs = allTabs.filter((t) => !t.includes(" - R") && !t.includes(" - GTP") && !t.includes("Dashboard") && !t.includes("Command") &&
+            // Only new-layout one-off month tabs (not recurring, generated, or system tabs).
+            const monthTabs = allTabs.filter((t) => !t.includes(" - R") && !t.includes(" - GTP") && !t.includes("Dashboard") && !t.includes("Log") && !t.includes("Command") &&
                 !t.includes("EFRAIN") && !t.includes("JASON") && t.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/));
             const tabResults = {};
             for (const tabName of monthTabs) {
@@ -1211,6 +1211,16 @@ export async function kcPPSync(req, res) {
             res.json({ status: "ok", elapsed: `${elapsed}s`, tab: tabName, rulesExtended: count });
             return;
         }
+        if (req.body?.releasedBelowSubCF) {
+            const target = req.body.releasedBelowSubCF;
+            const tabs = Array.isArray(target) ? target : [target];
+            for (const tabName of tabs) {
+                await setupReleasedBelowSubInvoiceCF(config.sheets.spreadsheetId, tabName);
+            }
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            res.json({ status: "ok", elapsed: `${elapsed}s`, tabs, rulesApplied: tabs.length });
+            return;
+        }
         // Handle refreshDashboard-only request
         if (req.body?.refreshDashboard === true && !req.body?.mode && !req.body?.tab) {
             console.log("Dashboard-only refresh requested");
@@ -1226,7 +1236,7 @@ export async function kcPPSync(req, res) {
                 gtpRows: 0,
                 elapsed: `${elapsed}s`,
                 error: "",
-            }).catch((e) => console.warn(`  Command log failed: ${e}`));
+            }).catch((e) => console.warn(`  Sync log failed: ${e}`));
             res.status(200).json({ status: "ok", elapsed: `${elapsed}s`, dashboard: true, totalJobs: dashCount });
             return;
         }
@@ -1319,6 +1329,13 @@ export async function kcPPSync(req, res) {
             catch (e) {
                 console.warn(`  Client-Paid-On-Hold CF setup failed: ${e}`);
             }
+            // Flag under-released rows: released amount lower than sub invoice amount.
+            try {
+                await setupReleasedBelowSubInvoiceCF(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+            }
+            catch (e) {
+                console.warn(`  Released-Below-Sub-Invoice CF setup failed: ${e}`);
+            }
         }
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const summary = {
@@ -1333,7 +1350,7 @@ export async function kcPPSync(req, res) {
             spreadsheetId: config.sheets.dryRun ? null : config.sheets.spreadsheetId,
         };
         console.log(`Done in ${elapsed}s`, JSON.stringify(summary));
-        // Log success to Command tab
+        // Log success to the sync log tab.
         await logSyncResult(config.sheets.spreadsheetId, {
             timestamp: new Date().toISOString(),
             tab: config.sheets.sheetsTab,
@@ -1343,7 +1360,7 @@ export async function kcPPSync(req, res) {
             gtpRows: gtpCount,
             elapsed: `${elapsed}s`,
             error: "",
-        }).catch((e) => console.warn(`  Command log failed: ${e}`));
+        }).catch((e) => console.warn(`  Sync log failed: ${e}`));
         // Log dashboard refresh separately
         if (dashboardCount > 0) {
             await logSyncResult(config.sheets.spreadsheetId, {
@@ -1363,7 +1380,7 @@ export async function kcPPSync(req, res) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const message = err instanceof Error ? err.message : String(err);
         console.error(`FATAL (${elapsed}s): ${message}`);
-        // Log failure to Command tab
+        // Log failure to the sync log tab.
         const tabName = req.body?.tab ?? req.body?.mode ?? "unknown";
         const spreadsheetId = process.env.SPREADSHEET_ID ?? process.env.GOOGLE_SHEETS_DEFAULT_ID ?? "";
         await logSyncResult(spreadsheetId, {
@@ -1375,7 +1392,7 @@ export async function kcPPSync(req, res) {
             gtpRows: 0,
             elapsed: `${elapsed}s`,
             error: message.slice(0, 500),
-        }).catch((e) => console.warn(`  Command log failed: ${e}`));
+        }).catch((e) => console.warn(`  Sync log failed: ${e}`));
         res.status(500).json({ status: "error", elapsed: `${elapsed}s`, error: message });
     }
 }

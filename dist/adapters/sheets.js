@@ -247,10 +247,7 @@ export async function refreshGTPTab(spreadsheetId, sourceTab) {
     console.log(`  GTP from '${sourceTab}': ${gtpRows.length} rows`);
     // --- Also read recurring tab ({Month} - R) if it exists ---
     // Recurring tabs always use legacy layout (A-Z, 26 cols)
-    // For legacy months use short names: "February" → "Feb - R"
-    const MONTH_SHORT_R = { January: "Jan", February: "Feb" };
-    const recurringMonthName = MONTH_SHORT_R[monthName] ?? monthName;
-    const recurringTab = `${recurringMonthName} - R`;
+    const recurringTab = `${monthName} - R`;
     try {
         const recurRes = await sheets.spreadsheets.values.get({
             spreadsheetId,
@@ -348,51 +345,51 @@ export async function getSheetsClient() {
     return google.sheets({ version: "v4", auth: authClient });
 }
 // ---------------------------------------------------------------------------
-// Command tab — sync result logging
+// Log tab — sync result logging
 // ---------------------------------------------------------------------------
-const COMMAND_TAB = "Log";
-const COMMAND_HEADERS = [
+const LOG_TAB = "Log";
+const LOG_HEADERS = [
     "Timestamp", "Tab", "Status", "Jobs", "Rows", "GTP Rows", "Elapsed", "Error",
 ];
 /**
- * Append a sync result row to the Command tab.
+ * Append a sync result row to the Log tab.
  * Creates the tab with headers if it doesn't exist.
  */
 export async function logSyncResult(spreadsheetId, entry) {
     if (!spreadsheetId) {
-        console.warn("  Command log: no spreadsheetId — skipping");
+        console.warn("  Sync log: no spreadsheetId — skipping");
         return;
     }
     const sheets = await getSheetsClient();
-    // Check if Command tab exists; create if not
+    // Check if Log tab exists; create if not
     const meta = await sheets.spreadsheets.get({
         spreadsheetId,
         fields: "sheets.properties.title",
     });
-    const tabExists = meta.data.sheets?.some((s) => s.properties?.title === COMMAND_TAB);
+    const tabExists = meta.data.sheets?.some((s) => s.properties?.title === LOG_TAB);
     if (!tabExists) {
-        console.log("  Command tab: creating...");
+        console.log("  Log tab: creating...");
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
             requestBody: {
                 requests: [
-                    { addSheet: { properties: { title: COMMAND_TAB, index: 0 } } },
+                    { addSheet: { properties: { title: LOG_TAB, index: 0 } } },
                 ],
             },
         });
         // Write headers
         await sheets.spreadsheets.values.update({
             spreadsheetId,
-            range: `'${COMMAND_TAB}'!A1:H1`,
+            range: `'${LOG_TAB}'!A1:H1`,
             valueInputOption: "RAW",
-            requestBody: { values: [COMMAND_HEADERS] },
+            requestBody: { values: [LOG_HEADERS] },
         });
-        console.log("  Command tab: created with headers");
+        console.log("  Log tab: created with headers");
     }
     // Append the log row
     await sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: `'${COMMAND_TAB}'!A:H`,
+        range: `'${LOG_TAB}'!A:H`,
         valueInputOption: "RAW",
         insertDataOption: "INSERT_ROWS",
         requestBody: {
@@ -408,7 +405,7 @@ export async function logSyncResult(spreadsheetId, entry) {
                 ]],
         },
     });
-    console.log(`  Command log: ${entry.status} — ${entry.tab}`);
+    console.log(`  Sync log: ${entry.status} — ${entry.tab}`);
 }
 // ---------------------------------------------------------------------------
 // Dashboard tab — payment completion rates
@@ -450,11 +447,11 @@ function getDashboardColIndices(tabName) {
 /**
  * Extract canonical month name from a tab name.
  * "March" → "March", "January 2026" → "January", "April - R" → "April"
- * "Feb - R" → "February" (handles abbreviated month names)
+ * "February - R" → "February"
  */
 function extractMonthName(tabName) {
     const base = tabName.replace(/ - R$/, "").replace(/\s+\d{4}$/, "").trim();
-    // Handle abbreviated month names (e.g. "Feb" → "February", "Jan" → "January")
+    // Handle abbreviated month names from older historical tab names (e.g. "Jan" → "January")
     const ABBREV_MAP = {
         "Jan": "January", "Feb": "February", "Mar": "March", "Apr": "April",
         "Jun": "June", "Jul": "July", "Aug": "August", "Sep": "September",
@@ -1004,13 +1001,6 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         return new Map();
     const dashboardSheetId = dashSheet.properties.sheetId;
     // 2. Auto-discover month tabs from spreadsheet (no hardcoded list)
-    // Recurring tab naming: "Feb - R" (abbreviated), all others "{Month} - R"
-    const RECURRING_TAB_ABBREVS = {
-        "January": "Jan - R", "February": "Feb - R", "March": "March - R",
-        "April": "April - R", "May": "May - R", "June": "June - R",
-        "July": "July - R", "August": "August - R", "September": "September - R",
-        "October": "October - R", "November": "November - R", "December": "December - R",
-    };
     const tabSet = new Set(allTabs);
     const MONTHS_TO_SCAN = [];
     for (const monthName of MONTH_NAMES) {
@@ -1032,7 +1022,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         }
         if (!oneOffTab)
             continue; // Tab doesn't exist yet — skip
-        const recurringTab = RECURRING_TAB_ABBREVS[monthName] || `${monthName} - R`;
+        const recurringTab = `${monthName} - R`;
         const type = isNewLayout(oneOffTab) ? "new" : "legacy";
         MONTHS_TO_SCAN.push({ display: monthName, oneOffTab, recurringTab, type });
     }
@@ -1901,6 +1891,78 @@ export async function setupClientPaidOnHoldCF(spreadsheetId, tabName) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
     const deleted = requests.length - 1;
     console.log(`  setupClientPaidOnHoldCF: ${deleted} old rules removed, 1 rule added on "${tabName}" (${formula})`);
+}
+/**
+ * Highlight amount cells when KCPC released amount is lower than sub invoice.
+ */
+export function buildReleasedBelowSubInvoiceFormula(subCol, releaseCol) {
+    const numeric = (col) => `IFERROR(VALUE(REGEXREPLACE(TO_TEXT($${col}2),"[^0-9.-]","")),0)`;
+    const subAmount = numeric(subCol);
+    const releaseAmount = numeric(releaseCol);
+    return `=AND(${subAmount}>0,LEN($${releaseCol}2&"")>0,${releaseAmount}<${subAmount})`;
+}
+export async function setupReleasedBelowSubInvoiceCF(spreadsheetId, tabName) {
+    const sheets = await getSheetsClient();
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: "sheets(properties,conditionalFormats)",
+    });
+    const sheet = meta.data.sheets?.find((s) => s.properties?.title === tabName);
+    if (!sheet)
+        throw new Error(`Tab "${tabName}" not found`);
+    const sheetId = sheet.properties.sheetId;
+    const cf = sheet.conditionalFormats || [];
+    const recurring = tabName.endsWith(" - R");
+    const layoutNew = !recurring && isNewLayout(tabName);
+    const subCol = layoutNew ? "Q" : recurring ? "R" : "S";
+    const releaseCol = layoutNew ? "R" : recurring ? "S" : "T";
+    const subIdx = layoutNew ? 16 : recurring ? 17 : 18;
+    const releaseIdx = layoutNew ? 17 : recurring ? 18 : 19;
+    const legacyMarker = `VALUE($${releaseCol}2)<VALUE($${subCol}2)`;
+    const requests = [];
+    for (let i = cf.length - 1; i >= 0; i--) {
+        const cond = cf[i]?.booleanRule?.condition;
+        if (cond?.type !== "CUSTOM_FORMULA")
+            continue;
+        const formula = cond.values?.[0]?.userEnteredValue || "";
+        const targetsAmountRange = (cf[i]?.ranges || []).some((r) => r.sheetId === sheetId &&
+            r.startColumnIndex === subIdx &&
+            r.endColumnIndex === releaseIdx + 1);
+        const comparesAmountPair = formula.includes(`$${subCol}2`) &&
+            formula.includes(`$${releaseCol}2`) &&
+            formula.includes("<");
+        if (formula.includes(legacyMarker) || (targetsAmountRange && comparesAmountPair)) {
+            requests.push({ deleteConditionalFormatRule: { sheetId, index: i } });
+        }
+    }
+    const formula = buildReleasedBelowSubInvoiceFormula(subCol, releaseCol);
+    requests.push({
+        addConditionalFormatRule: {
+            rule: {
+                ranges: [{
+                        sheetId,
+                        startRowIndex: 1,
+                        endRowIndex: 500,
+                        startColumnIndex: subIdx,
+                        endColumnIndex: releaseIdx + 1,
+                    }],
+                booleanRule: {
+                    condition: {
+                        type: "CUSTOM_FORMULA",
+                        values: [{ userEnteredValue: formula }],
+                    },
+                    format: {
+                        backgroundColor: { red: 1, green: 0, blue: 0 },
+                        textFormat: { foregroundColor: { red: 1, green: 1, blue: 1 }, bold: true },
+                    },
+                },
+            },
+            index: 0,
+        },
+    });
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    const deleted = requests.length - 1;
+    console.log(`  setupReleasedBelowSubInvoiceCF: ${deleted} old rules removed, 1 rule added on "${tabName}" (${subCol}:${releaseCol})`);
 }
 export async function renameTab(spreadsheetId, from, to) {
     const sheets = await getSheetsClient();

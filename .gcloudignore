@@ -8,7 +8,10 @@ phases/
 *.test.ts
 tsconfig.json
 .env
+.env.local
+.env.*
 .env.example
 .gitignore
+SECRETS.md
 CLAUDE_TASK.md
 TODO.md
