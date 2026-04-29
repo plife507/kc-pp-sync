@@ -8,11 +8,8 @@ Last reviewed: 2026-04-29
 
 ## Current Priorities
 
-- [ ] Repair live hidden `May` tab to March/April 40-column visible layout with margin column C.
-- [ ] Create live `May - R` recurring tab from the 26-column recurring layout.
-- [ ] Unhide/verify `May`, `May - R`, and `May - GTP $`, then run targeted May syncs.
-- [ ] Remove stale hidden June-December prebuilt tabs after confirming they have no live rows.
-- [ ] Refresh Dashboard/profitability after May tabs are structurally verified.
+- [ ] Run targeted May one-off and recurring syncs once May work rows are ready.
+- [ ] Refresh Dashboard/profitability after May syncs are structurally verified.
 - [ ] Keep README, CLAUDE.md, and deployed behavior aligned after releases.
 - [ ] Keep GCloud revision/image cleanup light and periodic.
 - [ ] Re-check HeyPros/API assumptions before any logic change tied to archived/closed visibility.
@@ -24,8 +21,10 @@ Last reviewed: 2026-04-29
 
 ## Recently Completed
 
+- [x] Rebuilt live `May` from April layout and created `May - R` / `May - GTP $` through the service rollover path.
+- [x] Removed stale hidden June-December prebuilt one-off and GTP tabs after confirming no live rows.
 - [x] Added source-tab layout validation so mis-shaped future tabs fail before writes.
-- [x] Confirmed live May prep state: hidden `May` missing margin C, hidden `May - GTP $` exists, `May - R` missing.
+- [x] Confirmed live May prep state: hidden `May` missing margin C, hidden `May - GTP $` existed, `May - R` missing.
 - [x] Decided to stop prebuilding the rest of the year; create month tabs only during rollover.
 - [x] Removed deprecated one-time setup helpers from `scripts/`.
 - [x] Updated docs to avoid stale Cloud Run revision claims.

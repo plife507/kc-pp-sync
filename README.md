@@ -36,7 +36,7 @@ gcloud scheduler jobs list --location us-central1 --project aya-gservicies
 
 | Tab family | Examples | Columns | Key rule |
 |---|---|---:|---|
-| New one-off | `March`, `April`, `May` | 40, A-AN | Has margin col C and 5-slot invoice tracker Z-AN |
+| New one-off | `March`, `April`, `May` | 40 visible + hidden AO | Has margin col C, 5-slot invoice tracker Z-AN, and hidden client-paid date AO |
 | Legacy one-off | `February` | 27, A-AA | Has margin col C but single-invoice layout |
 | Recurring | `March - R`, `April - R` | 26, A-Z | No margin col C; indices are shifted from one-off tabs |
 | GTP output | `April - GTP $` | 9 | Generated from one-off + recurring source tabs |
@@ -84,6 +84,12 @@ Exact tab targeting is also supported:
 ```bash
 -d '{"tab":"April"}'
 -d '{"tab":"April - R"}'
+```
+
+Month rollover setup is handled by the service, not by local one-off scripts:
+
+```bash
+-d '{"setupMonthTabs":{"month":"May","oneOffTemplate":"April","recurringTemplate":"April - R","gtpTemplate":"April - GTP $","replaceExisting":true}}'
 ```
 
 ## Scheduler

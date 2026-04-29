@@ -58,7 +58,7 @@ There are three real source-tab layouts:
 
 | Layout | Examples | Columns | Margin C? | Manual driver |
 |---|---|---:|---|---|
-| New one-off | `March`, `April`, `May` | 40, A-AN | yes | Job # in G |
+| New one-off | `March`, `April`, `May` | 40 visible + hidden AO | yes | Job # in G |
 | Legacy one-off | `February` | 27, A-AA | yes | Job # in G |
 | Recurring | `March - R`, `April - R` | 26, A-Z | no | Job # in F, Invoice # in L |
 
@@ -91,7 +91,7 @@ Manual columns must never be overwritten:
 
 ## May 2026 Prep
 
-Live sheet state observed 2026-04-29: hidden `May` exists but has 39 visible columns and no margin column C, hidden `May - GTP $` exists, and `May - R` is missing. Future June-December hidden tabs are stale prebuilt templates and should be removed after verifying they contain no live rows. Before enabling May sync traffic, repair `May` to the March/April 40-column visible layout, create `May - R` from the recurring layout, unhide needed tabs, then refresh Dashboard/profitability.
+Live sheet state after 2026-04-29 rollover cleanup: stale hidden June-December one-off/GTP tabs were removed, `May` was rebuilt from April layout, `May - R` was created from `April - R`, and `May - GTP $` was rebuilt from April GTP layout. May tabs are visible and empty; run targeted May syncs only when May work rows are ready.
 
 ## Before Finishing Code Work
 
