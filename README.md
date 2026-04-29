@@ -46,6 +46,8 @@ gcloud scheduler jobs list --location us-central1 --project aya-gservicies
 
 The recurring/no-margin difference is the main footgun. Any read/write logic that touches columns must branch across new one-off, legacy one-off, and recurring layouts.
 
+Before syncing, source tabs are validated against the expected header positions. This prevents hidden/future month templates from silently syncing one column off. As of 2026-04-29, the live hidden `May` template exists but is missing margin column C, `May - GTP $` exists, and `May - R` does not exist; repair/create those live tabs before May scheduler traffic starts.
+
 ## Sync API
 
 Manual syncs use authenticated POSTs to Cloud Run.

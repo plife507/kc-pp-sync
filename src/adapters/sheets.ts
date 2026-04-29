@@ -68,7 +68,7 @@ export const AUTO_COL_LETTERS_LEGACY = new Set(["A","C","D","E","F","H","I","J",
 // For recurring tabs: A (Date), L (Invoice #), S (KCPC Released Amount) are manual
 export const RECURRING_AUTO_COL_LETTERS = new Set(["A","C","D","E","G","H","I","J","K","M","N","O","P","Q","R","T","Z"]);
 
-/** Determine if a tab uses the new 39-column layout (March-forward) or legacy 26-column. */
+/** Determine if a tab uses the new 40-column visible layout (March-forward) or legacy 27-column layout. */
 export function isNewLayout(tabName: string): boolean {
   // Legacy tabs: "January 2026", "February 2026", "January", "February"
   // New tabs: "March", "April", etc. (no year suffix, and not Jan/Feb)
@@ -76,6 +76,129 @@ export function isNewLayout(tabName: string): boolean {
   const legacyPattern = /^\w+\s+\d{4}$/;
   const legacyMonths = ["January", "February"];
   return !legacyPattern.test(tabName) && !legacyMonths.includes(tabName);
+}
+
+export type SourceTabLayout = "new-one-off" | "legacy-one-off" | "recurring";
+
+export interface SourceTabLayoutValidation {
+  ok: boolean;
+  layout: SourceTabLayout;
+  errors: string[];
+}
+
+function normalizeHeaderCell(value: unknown): string {
+  return String(value ?? "")
+    .replace(/^\[[AM]\]\s*/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/invoice/g, "inv")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isMarginHeader(value: unknown): boolean {
+  const raw = String(value ?? "").trim();
+  return normalizeHeaderCell(raw) === "margin" || /^\d+(?:\.\d+)?%$/.test(raw);
+}
+
+function headerMatches(row: string[], index: number, aliases: string[]): boolean {
+  const actual = normalizeHeaderCell(row[index]);
+  return aliases.some(alias => actual === normalizeHeaderCell(alias));
+}
+
+function describeCell(index: number): string {
+  let col = "";
+  let n = index + 1;
+  while (n > 0) {
+    const mod = (n - 1) % 26;
+    col = String.fromCharCode(65 + mod) + col;
+    n = Math.floor((n - mod) / 26);
+  }
+  return col;
+}
+
+export function validateSourceTabHeader(tabName: string, headerRow: string[]): SourceTabLayoutValidation {
+  const layout: SourceTabLayout = tabName.endsWith(" - R")
+    ? "recurring"
+    : isNewLayout(tabName)
+      ? "new-one-off"
+      : "legacy-one-off";
+
+  const errors: string[] = [];
+
+  const requireMinColumns = (count: number) => {
+    if (headerRow.length < count) {
+      errors.push(`expected at least ${count} visible header columns, found ${headerRow.length}`);
+    }
+  };
+
+  const requireHeader = (index: number, aliases: string[]) => {
+    if (!headerMatches(headerRow, index, aliases)) {
+      const expected = aliases[0];
+      const actual = String(headerRow[index] ?? "").trim() || "(blank)";
+      errors.push(`${describeCell(index)} should be "${expected}", found "${actual}"`);
+    }
+  };
+
+  if (layout === "new-one-off") {
+    requireMinColumns(40);
+    if (!isMarginHeader(headerRow[2])) {
+      const actual = String(headerRow[2] ?? "").trim() || "(blank)";
+      errors.push(`C should be "Margin %" or a margin percentage, found "${actual}"`);
+    }
+    requireHeader(0, ["Date"]);
+    requireHeader(1, ["REVIEW"]);
+    requireHeader(3, ["Company Name"]);
+    requireHeader(6, ["Job #"]);
+    requireHeader(14, ["All Paid?"]);
+    requireHeader(16, ["Sub Invoice Amount"]);
+    requireHeader(19, ["Payment Status"]);
+    requireHeader(20, ["Payment Tracking (Finance)", "Payment Tracking"]);
+    requireHeader(24, ["Auto Notes"]);
+    requireHeader(39, ["Inv #5 Paid?", "Invoice 5 Paid?"]);
+  } else if (layout === "legacy-one-off") {
+    requireMinColumns(27);
+    if (!isMarginHeader(headerRow[2])) {
+      const actual = String(headerRow[2] ?? "").trim() || "(blank)";
+      errors.push(`C should be "Margin %" or a margin percentage, found "${actual}"`);
+    }
+    requireHeader(0, ["Date"]);
+    requireHeader(1, ["REVIEW"]);
+    requireHeader(6, ["Job #"]);
+    requireHeader(12, ["Invoice Number"]);
+    requireHeader(18, ["Sub Invoice Amount"]);
+    requireHeader(21, ["Payment Status"]);
+    requireHeader(22, ["Payment Tracking (Finance)", "Payment Tracking"]);
+    requireHeader(26, ["Auto Notes"]);
+  } else {
+    requireMinColumns(26);
+    requireHeader(0, ["Date"]);
+    requireHeader(1, ["REVIEW"]);
+    requireHeader(2, ["Company Name"]);
+    requireHeader(5, ["Job #"]);
+    requireHeader(11, ["Invoice Number"]);
+    requireHeader(17, ["Sub Invoice Amount"]);
+    requireHeader(20, ["Payment Status"]);
+    requireHeader(21, ["Payment Tracking (Finance)", "Payment Tracking"]);
+    requireHeader(25, ["Auto Notes"]);
+  }
+
+  return { ok: errors.length === 0, layout, errors };
+}
+
+export async function assertSourceTabLayout(spreadsheetId: string, tabName: string): Promise<void> {
+  const sheets = await getSheetsClient();
+  const endCol = tabName.endsWith(" - R") ? "Z" : isNewLayout(tabName) ? "AN" : "AA";
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tabName}'!A1:${endCol}1`,
+  });
+  const headerRow = (res.data.values?.[0] ?? []) as string[];
+  const validation = validateSourceTabHeader(tabName, headerRow);
+  if (!validation.ok) {
+    throw new Error(
+      `Tab "${tabName}" does not match expected ${validation.layout} layout: ${validation.errors.join("; ")}. Refusing to sync until the tab is repaired.`,
+    );
+  }
 }
 
 /**
@@ -2013,7 +2136,7 @@ export async function setupClientPaidOnHoldCF(spreadsheetId: string, tabName: st
     // Recurring: 26 cols, no margin C — AllPaid=O, PaymentStatus=U, PaymentTracking=V
     colAllPaid = "O"; colPayStatus = "U"; colPayTracking = "V";
   } else if (layoutNew) {
-    // New layout (March+): 39 cols with margin C — AllPaid=O, PaymentStatus=T, PaymentTracking=U
+    // New layout (March+): 40 visible cols with margin C — AllPaid=O, PaymentStatus=T, PaymentTracking=U
     colAllPaid = "O"; colPayStatus = "T"; colPayTracking = "U";
   } else {
     // Legacy one-off (Feb): 27 cols with margin C — AllPaid=P, PaymentStatus=V, PaymentTracking=W

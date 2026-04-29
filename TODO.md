@@ -8,8 +8,10 @@ Last reviewed: 2026-04-29
 
 ## Current Priorities
 
-- [ ] Plan and implement May one-off/recurring/GTP tab support.
-- [ ] Update Dashboard/profitability logic for May once tab shape is confirmed.
+- [ ] Repair live hidden `May` tab to March/April 40-column visible layout with margin column C.
+- [ ] Create live `May - R` recurring tab from the 26-column recurring layout.
+- [ ] Unhide/verify `May`, `May - R`, and `May - GTP $`, then run targeted May syncs.
+- [ ] Refresh Dashboard/profitability after May tabs are structurally verified.
 - [ ] Keep README, CLAUDE.md, and deployed behavior aligned after releases.
 - [ ] Keep GCloud revision/image cleanup light and periodic.
 - [ ] Re-check HeyPros/API assumptions before any logic change tied to archived/closed visibility.
@@ -21,6 +23,8 @@ Last reviewed: 2026-04-29
 
 ## Recently Completed
 
+- [x] Added source-tab layout validation so mis-shaped future tabs fail before writes.
+- [x] Confirmed live May prep state: hidden `May` missing margin C, hidden `May - GTP $` exists, `May - R` missing.
 - [x] Removed deprecated one-time setup helpers from `scripts/`.
 - [x] Updated docs to avoid stale Cloud Run revision claims.
 - [x] Payment dashboard live and auto-refreshing.

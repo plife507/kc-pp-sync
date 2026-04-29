@@ -7,7 +7,7 @@
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
 import { logSyncResult } from "./adapters/sheets.js";
@@ -81,6 +81,7 @@ function parseTabMonth(tabName) {
  * Reads job numbers from the output sheet, fetches data, and batch-updates auto columns only.
  */
 async function runSourceSheetFlow(config) {
+    await assertSourceTabLayout(config.sheets.spreadsheetId, config.sheets.sheetsTab);
     // 1. Read job numbers from output sheet
     console.log("Step 1: Reading job numbers from output sheet...");
     const outputRows = await readOutputSheetJobNumbers(config.sheets.spreadsheetId, config.sheets.sheetsTab);
@@ -497,6 +498,7 @@ async function runSourceSheetFlow(config) {
  * - No GTP refresh
  */
 async function runRecurringTabFlow(config) {
+    await assertSourceTabLayout(config.sheets.spreadsheetId, config.sheets.sheetsTab);
     console.log("Step 1: Reading recurring tab rows...");
     const rows = await readRecurringTabRows(config.sheets.spreadsheetId, config.sheets.sheetsTab);
     if (rows.length === 0) {

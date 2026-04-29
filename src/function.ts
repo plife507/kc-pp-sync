@@ -9,7 +9,7 @@ import { loadConfig, resolveMode } from "./config/env.js";
 import type { Config } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
 import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
-import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient } from "./adapters/sheets.js";
+import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
 import { HEADER_ROW, HEADER_ROW_LEGACY, HEYPROS_FILE_BASE } from "./config/constants.js";
 
 import type { JobberPaidJob, HeyProsJobDetail } from "./config/types.js";
@@ -93,6 +93,8 @@ function parseTabMonth(tabName: string): { month: number; year: number } | null 
  * Reads job numbers from the output sheet, fetches data, and batch-updates auto columns only.
  */
 async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number; jobCount: number }> {
+  await assertSourceTabLayout(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+
   // 1. Read job numbers from output sheet
   console.log("Step 1: Reading job numbers from output sheet...");
   const outputRows = await readOutputSheetJobNumbers(
@@ -555,6 +557,8 @@ async function runSourceSheetFlow(config: Config): Promise<{ updateCount: number
  * - No GTP refresh
  */
 async function runRecurringTabFlow(config: Config): Promise<{ updateCount: number; jobCount: number }> {
+  await assertSourceTabLayout(config.sheets.spreadsheetId, config.sheets.sheetsTab);
+
   console.log("Step 1: Reading recurring tab rows...");
   const rows = await readRecurringTabRows(
     config.sheets.spreadsheetId,

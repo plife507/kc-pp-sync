@@ -19,8 +19,16 @@ export declare const AUTO_COL_LETTERS_NEW: Set<string>;
  */
 export declare const AUTO_COL_LETTERS_LEGACY: Set<string>;
 export declare const RECURRING_AUTO_COL_LETTERS: Set<string>;
-/** Determine if a tab uses the new 39-column layout (March-forward) or legacy 26-column. */
+/** Determine if a tab uses the new 40-column visible layout (March-forward) or legacy 27-column layout. */
 export declare function isNewLayout(tabName: string): boolean;
+export type SourceTabLayout = "new-one-off" | "legacy-one-off" | "recurring";
+export interface SourceTabLayoutValidation {
+    ok: boolean;
+    layout: SourceTabLayout;
+    errors: string[];
+}
+export declare function validateSourceTabHeader(tabName: string, headerRow: string[]): SourceTabLayoutValidation;
+export declare function assertSourceTabLayout(spreadsheetId: string, tabName: string): Promise<void>;
 /**
  * Read Job # (col F) and Invoice # (col L) and HeyPros ID (col E) from a recurring tab.
  */

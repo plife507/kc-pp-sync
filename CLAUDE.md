@@ -62,7 +62,7 @@ There are three real source-tab layouts:
 | Legacy one-off | `February` | 27, A-AA | yes | Job # in G |
 | Recurring | `March - R`, `April - R` | 26, A-Z | no | Job # in F, Invoice # in L |
 
-Recurring tabs do not have margin column C. Any column read/write logic must branch on new one-off, legacy one-off, and recurring. `isNewLayout()` is the source of truth for one-off layout detection.
+Recurring tabs do not have margin column C. Any column read/write logic must branch on new one-off, legacy one-off, and recurring. `isNewLayout()` is the source of truth for one-off layout detection. `assertSourceTabLayout()` must run before source-tab syncs so future templates like hidden `May` cannot be synced with shifted columns.
 
 Manual columns must never be overwritten:
 
@@ -86,6 +86,10 @@ Manual columns must never be overwritten:
 - Jobber `receivedDate` is the paid date.
 - Hybrid margin logic is intentionally blank unless a future labor-cost model is approved.
 - HeyPros writes are out of scope unless Nathan explicitly approves them.
+
+## May 2026 Prep
+
+Live sheet state observed 2026-04-29: hidden `May` exists but has 39 visible columns and no margin column C, hidden `May - GTP $` exists, and `May - R` is missing. Before enabling May sync traffic, repair `May` to the March/April 40-column visible layout, create `May - R` from the recurring layout, unhide needed tabs, then refresh Dashboard/profitability.
 
 ## Before Finishing Code Work
 

@@ -1,6 +1,6 @@
 /**
- * NEW 39-column layout (A–AM) for March-forward tabs.
- * Used for new monthly tabs (e.g., "March", "April").
+ * NEW 40-column visible layout (A-AN) for March-forward one-off tabs.
+ * Runtime writes a hidden AO helper value for latest client-paid date.
  */
 export declare const HEADER_ROW: string[];
 /**

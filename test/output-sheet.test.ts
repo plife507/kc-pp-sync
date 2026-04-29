@@ -4,7 +4,34 @@ import {
   AUTO_COL_LETTERS_LEGACY,
   AUTO_COL_LETTERS_NEW,
   buildReleasedBelowSubInvoiceFormula,
+  validateSourceTabHeader,
 } from "../src/adapters/sheets.js";
+
+const NEW_ONE_OFF_HEADER = [
+  "[A] Date", "[M] REVIEW", "Margin %", "[A] Company Name",
+  "[A] Preferred Partner Owner Name", "[A] HeyPros ID #", "[M] Job #",
+  "[A] Jobber Link", "[A] Job Status", "[A] Job Type", "[A] Client Name",
+  "[A] Division", "[A] # of Invoices", "[A] Total Invoiced", "[A] All Paid?",
+  "[A] HeyPros Invoice #", "[A] Sub Invoice Amount", "[M] KCPC Released Amount",
+  "[A] Contractor Invoice PDF", "[M] Payment Status", "[M] Payment Tracking (Finance)",
+  "[M] Payment Method (Finance)", "[M] Date of Payment", "[M] Notes / Remarks",
+  "[A] Auto Notes", "[A] Invoice 1 #", "[A] Invoice 1 Amt", "[A] Invoice 1 Paid?",
+  "[A] Invoice 2 #", "[A] Invoice 2 Amt", "[A] Invoice 2 Paid?",
+  "[A] Invoice 3 #", "[A] Invoice 3 Amt", "[A] Invoice 3 Paid?",
+  "[A] Invoice 4 #", "[A] Invoice 4 Amt", "[A] Invoice 4 Paid?",
+  "[A] Invoice 5 #", "[A] Invoice 5 Amt", "[A] Invoice 5 Paid?",
+];
+
+const RECURRING_HEADER = [
+  "[A] Date", "[M] REVIEW", "[A] Company Name", "[A] Preferred Partner Owner Name",
+  "[A] HeyPros ID #", "[M] Job #", "[A] Jobber Link", "[A] Job Status",
+  "[A] Job Type", "[A] Client Name", "[A] Division", "[M] Invoice Number",
+  "[A] Jobber Invoice Total Amount", "[A] Invoice Issued Date", "[A] Jobber Invoice Status",
+  "[A] Date Invoice Paid", "[A] HeyPros Invoice #", "[A] Sub Invoice Amount",
+  "[M] KCPC Released Amount", "[A] Contractor Invoice PDF", "[M] Payment Status",
+  "[M] Payment Tracking (Finance)", "[M] Payment Method (Finance)", "[M] Date of Payment",
+  "[M] Notes / Remarks", "[A] Auto Notes",
+];
 
 describe("AUTO_COL_LETTERS_LEGACY", () => {
   it("contains shifted auto columns: F,H,I,J,K,L,M,N,O,P,Q,R,S,U,AA", () => {
@@ -58,6 +85,36 @@ describe("buildReleasedBelowSubInvoiceFormula", () => {
       buildReleasedBelowSubInvoiceFormula("Q", "R"),
       '=AND(IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0)>0,LEN($R2&"")>0,IFERROR(VALUE(REGEXREPLACE(TO_TEXT($R2),"[^0-9.-]","")),0)<IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0))',
     );
+  });
+});
+
+describe("validateSourceTabHeader", () => {
+  it("accepts March-forward one-off headers with Margin % at C", () => {
+    const result = validateSourceTabHeader("May", NEW_ONE_OFF_HEADER);
+    assert.equal(result.ok, true, result.errors.join("; "));
+    assert.equal(result.layout, "new-one-off");
+  });
+
+  it("accepts synced one-off tabs where C1 is the month margin", () => {
+    const header = [...NEW_ONE_OFF_HEADER];
+    header[2] = "67.20%";
+    const result = validateSourceTabHeader("April", header);
+    assert.equal(result.ok, true, result.errors.join("; "));
+  });
+
+  it("rejects the current hidden May template shape without margin C", () => {
+    const mayNoMargin = NEW_ONE_OFF_HEADER.filter((_, index) => index !== 2);
+    const result = validateSourceTabHeader("May", mayNoMargin);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.includes("expected at least 40")));
+    assert.ok(result.errors.some(error => error.includes('C should be "Margin %"')));
+    assert.ok(result.errors.some(error => error.includes('G should be "Job #"')));
+  });
+
+  it("accepts recurring headers without margin C", () => {
+    const result = validateSourceTabHeader("May - R", RECURRING_HEADER);
+    assert.equal(result.ok, true, result.errors.join("; "));
+    assert.equal(result.layout, "recurring");
   });
 });
 
@@ -437,11 +494,15 @@ describe("parseTabMonth", () => {
   const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
   function parseTabMonth(tabName: string): { month: number; year: number } | null {
-    const match = tabName.match(/^(\w+)\s+(\d{4})$/);
-    if (!match) return null;
-    const monthIdx = MONTH_NAMES.indexOf(match[1]);
+    const legacyMatch = tabName.match(/^(\w+)\s+(\d{4})$/);
+    if (legacyMatch) {
+      const monthIdx = MONTH_NAMES.indexOf(legacyMatch[1]);
+      if (monthIdx === -1) return null;
+      return { month: monthIdx, year: parseInt(legacyMatch[2], 10) };
+    }
+    const monthIdx = MONTH_NAMES.indexOf(tabName);
     if (monthIdx === -1) return null;
-    return { month: monthIdx, year: parseInt(match[2], 10) };
+    return { month: monthIdx, year: 2026 };
   }
 
   it("parses March 2026 → month=2, year=2026", () => {
@@ -457,6 +518,11 @@ describe("parseTabMonth", () => {
   it("parses December 2026 → month=11, year=2026", () => {
     const r = parseTabMonth("December 2026");
     assert.deepEqual(r, { month: 11, year: 2026 });
+  });
+
+  it("parses bare May tab with current-year semantics", () => {
+    const r = parseTabMonth("May");
+    assert.deepEqual(r, { month: 4, year: 2026 });
   });
 
   it("returns null for Command UI tab", () => {
