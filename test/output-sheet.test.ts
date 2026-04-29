@@ -90,14 +90,14 @@ describe("buildReleasedBelowSubInvoiceFormula", () => {
 });
 
 describe("getLogTrimCount", () => {
-  it("does not trim the header or first 500 log entries", () => {
+  it("does not trim when the Log sheet has 500 total rows or fewer", () => {
     assert.equal(getLogTrimCount(1), 0);
-    assert.equal(getLogTrimCount(501), 0);
+    assert.equal(getLogTrimCount(500), 0);
   });
 
-  it("trims only oldest rows beyond 500 log entries", () => {
-    assert.equal(getLogTrimCount(502), 1);
-    assert.equal(getLogTrimCount(510), 9);
+  it("trims only oldest rows beyond 500 total rows", () => {
+    assert.equal(getLogTrimCount(501), 1);
+    assert.equal(getLogTrimCount(510), 10);
   });
 });
 

@@ -71,7 +71,7 @@ export declare function refreshGTPTab(spreadsheetId: string, sourceTab: string):
  */
 export declare function formatLinkColumns(spreadsheetId: string, tab: string, rowCount: number): Promise<void>;
 export declare function getSheetsClient(): Promise<import("googleapis").sheets_v4.Sheets>;
-export declare const LOG_MAX_DATA_ROWS = 500;
+export declare const LOG_MAX_ROWS = 500;
 export interface SyncLogEntry {
     timestamp: string;
     tab: string;
@@ -82,11 +82,11 @@ export interface SyncLogEntry {
     elapsed: string;
     error: string;
 }
-export declare function getLogTrimCount(totalUsedRows: number, maxDataRows?: number): number;
+export declare function getLogTrimCount(totalUsedRows: number, maxRows?: number): number;
 /**
  * Append a sync result row to the Log tab.
  * Creates the tab with headers if it doesn't exist.
- * Keeps only the latest 500 log entries, plus the header row.
+ * Keeps the Log sheet capped to 500 total rows, including the header.
  */
 export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void>;
 /**

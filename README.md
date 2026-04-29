@@ -41,7 +41,7 @@ gcloud scheduler jobs list --location us-central1 --project aya-gservicies
 | Recurring | `March - R`, `April - R` | 26, A-Z | No margin col C; indices are shifted from one-off tabs |
 | GTP output | `April - GTP $` | 9 | Generated from one-off + recurring source tabs |
 | Dashboard | `Dashboard` | varies | Generated summary/profitability output |
-| Sync log | `Log` | 8 | Appended after each sync; keeps latest 500 entries |
+| Sync log | `Log` | 8 | Appended after each sync; capped at 500 total rows including the header |
 | Command UI | `⚡ Command` | varies | In-sheet command center, not the sync log |
 
 The recurring/no-margin difference is the main footgun. Any read/write logic that touches columns must branch across new one-off, legacy one-off, and recurring layouts.

@@ -452,13 +452,13 @@ export async function getSheetsClient() {
 // Log tab — sync result logging
 // ---------------------------------------------------------------------------
 const LOG_TAB = "Log";
-export const LOG_MAX_DATA_ROWS = 500;
+export const LOG_MAX_ROWS = 500;
 const LOG_HEADERS = [
     "Timestamp", "Tab", "Status", "Jobs", "Rows", "GTP Rows", "Elapsed", "Error",
 ];
-export function getLogTrimCount(totalUsedRows, maxDataRows = LOG_MAX_DATA_ROWS) {
-    // Keep one header row plus the newest maxDataRows log entries.
-    return Math.max(0, totalUsedRows - 1 - maxDataRows);
+export function getLogTrimCount(totalUsedRows, maxRows = LOG_MAX_ROWS) {
+    // Keep the Log sheet capped to maxRows total rows, including the header.
+    return Math.max(0, totalUsedRows - maxRows);
 }
 async function trimSyncLogRows(sheets, spreadsheetId, logSheetId) {
     const res = await sheets.spreadsheets.values.get({
@@ -486,12 +486,12 @@ async function trimSyncLogRows(sheets, spreadsheetId, logSheetId) {
             ],
         },
     });
-    console.log(`  Sync log: trimmed ${rowsToDelete} old row(s); keeping latest ${LOG_MAX_DATA_ROWS}`);
+    console.log(`  Sync log: trimmed ${rowsToDelete} old row(s); keeping ${LOG_MAX_ROWS} total row(s)`);
 }
 /**
  * Append a sync result row to the Log tab.
  * Creates the tab with headers if it doesn't exist.
- * Keeps only the latest 500 log entries, plus the header row.
+ * Keeps the Log sheet capped to 500 total rows, including the header.
  */
 export async function logSyncResult(spreadsheetId, entry) {
     if (!spreadsheetId) {
