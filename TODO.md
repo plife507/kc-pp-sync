@@ -2,7 +2,7 @@
 
 ## Status
 
-Stable in production. Repo cleanup is the current prep step before May tab/dashboard work.
+Stable in production. Current prep is moving to a month-by-month tab rollover model before May tab/dashboard work.
 
 Last reviewed: 2026-04-29
 
@@ -11,6 +11,7 @@ Last reviewed: 2026-04-29
 - [ ] Repair live hidden `May` tab to March/April 40-column visible layout with margin column C.
 - [ ] Create live `May - R` recurring tab from the 26-column recurring layout.
 - [ ] Unhide/verify `May`, `May - R`, and `May - GTP $`, then run targeted May syncs.
+- [ ] Remove stale hidden June-December prebuilt tabs after confirming they have no live rows.
 - [ ] Refresh Dashboard/profitability after May tabs are structurally verified.
 - [ ] Keep README, CLAUDE.md, and deployed behavior aligned after releases.
 - [ ] Keep GCloud revision/image cleanup light and periodic.
@@ -25,6 +26,7 @@ Last reviewed: 2026-04-29
 
 - [x] Added source-tab layout validation so mis-shaped future tabs fail before writes.
 - [x] Confirmed live May prep state: hidden `May` missing margin C, hidden `May - GTP $` exists, `May - R` missing.
+- [x] Decided to stop prebuilding the rest of the year; create month tabs only during rollover.
 - [x] Removed deprecated one-time setup helpers from `scripts/`.
 - [x] Updated docs to avoid stale Cloud Run revision claims.
 - [x] Payment dashboard live and auto-refreshing.

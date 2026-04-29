@@ -64,6 +64,8 @@ There are three real source-tab layouts:
 
 Recurring tabs do not have margin column C. Any column read/write logic must branch on new one-off, legacy one-off, and recurring. `isNewLayout()` is the source of truth for one-off layout detection. `assertSourceTabLayout()` must run before source-tab syncs so future templates like hidden `May` cannot be synced with shifted columns.
 
+Do not prebuild future months for the rest of the year. Create the next month only during rollover from the latest known-good one-off, recurring, and GTP layouts, then validate headers before running syncs.
+
 Manual columns must never be overwritten:
 
 - New one-off: B, G, R, T, U, V, W, X
@@ -89,7 +91,7 @@ Manual columns must never be overwritten:
 
 ## May 2026 Prep
 
-Live sheet state observed 2026-04-29: hidden `May` exists but has 39 visible columns and no margin column C, hidden `May - GTP $` exists, and `May - R` is missing. Before enabling May sync traffic, repair `May` to the March/April 40-column visible layout, create `May - R` from the recurring layout, unhide needed tabs, then refresh Dashboard/profitability.
+Live sheet state observed 2026-04-29: hidden `May` exists but has 39 visible columns and no margin column C, hidden `May - GTP $` exists, and `May - R` is missing. Future June-December hidden tabs are stale prebuilt templates and should be removed after verifying they contain no live rows. Before enabling May sync traffic, repair `May` to the March/April 40-column visible layout, create `May - R` from the recurring layout, unhide needed tabs, then refresh Dashboard/profitability.
 
 ## Before Finishing Code Work
 

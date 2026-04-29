@@ -46,7 +46,17 @@ gcloud scheduler jobs list --location us-central1 --project aya-gservicies
 
 The recurring/no-margin difference is the main footgun. Any read/write logic that touches columns must branch across new one-off, legacy one-off, and recurring layouts.
 
-Before syncing, source tabs are validated against the expected header positions. This prevents hidden/future month templates from silently syncing one column off. As of 2026-04-29, the live hidden `May` template exists but is missing margin column C, `May - GTP $` exists, and `May - R` does not exist; repair/create those live tabs before May scheduler traffic starts.
+Before syncing, source tabs are validated against the expected header positions. This prevents hidden/future month templates from silently syncing one column off.
+
+Do not prebuild the rest of the year. Keep historical/current month tabs only, then create the next month when rollover is actually needed. This keeps stale hidden templates from drifting behind the active layout.
+
+Monthly rollover checklist:
+
+1. Confirm the new month does not already contain live rows.
+2. Create the one-off tab from the latest known-good 40-column month layout.
+3. Create the recurring tab from the latest known-good 26-column recurring layout.
+4. Create or verify the `{Month} - GTP $` output tab.
+5. Validate headers, run targeted one-off and recurring syncs, then refresh Dashboard/profitability.
 
 ## Sync API
 
@@ -131,6 +141,7 @@ After deploy, verify the latest ready revision, traffic, a safe endpoint call, a
 
 - Do not auto-write manual columns.
 - Do not add margin column C to recurring tabs.
+- Do not pre-create future month tabs beyond the active rollover month.
 - Do not change `gcp-build` away from `true` unless the deploy model changes.
 - Do not make HeyPros writes unless Nathan explicitly approves them.
 - Do not commit local secrets or private notes.
