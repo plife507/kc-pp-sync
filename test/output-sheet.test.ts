@@ -4,6 +4,7 @@ import {
   AUTO_COL_LETTERS_LEGACY,
   AUTO_COL_LETTERS_NEW,
   buildReleasedBelowSubInvoiceFormula,
+  getLogTrimCount,
   validateSourceTabHeader,
 } from "../src/adapters/sheets.js";
 
@@ -85,6 +86,18 @@ describe("buildReleasedBelowSubInvoiceFormula", () => {
       buildReleasedBelowSubInvoiceFormula("Q", "R"),
       '=AND(IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0)>0,LEN($R2&"")>0,IFERROR(VALUE(REGEXREPLACE(TO_TEXT($R2),"[^0-9.-]","")),0)<IFERROR(VALUE(REGEXREPLACE(TO_TEXT($Q2),"[^0-9.-]","")),0))',
     );
+  });
+});
+
+describe("getLogTrimCount", () => {
+  it("does not trim the header or first 500 log entries", () => {
+    assert.equal(getLogTrimCount(1), 0);
+    assert.equal(getLogTrimCount(501), 0);
+  });
+
+  it("trims only oldest rows beyond 500 log entries", () => {
+    assert.equal(getLogTrimCount(502), 1);
+    assert.equal(getLogTrimCount(510), 9);
   });
 });
 

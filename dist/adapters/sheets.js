@@ -452,12 +452,46 @@ export async function getSheetsClient() {
 // Log tab — sync result logging
 // ---------------------------------------------------------------------------
 const LOG_TAB = "Log";
+export const LOG_MAX_DATA_ROWS = 500;
 const LOG_HEADERS = [
     "Timestamp", "Tab", "Status", "Jobs", "Rows", "GTP Rows", "Elapsed", "Error",
 ];
+export function getLogTrimCount(totalUsedRows, maxDataRows = LOG_MAX_DATA_ROWS) {
+    // Keep one header row plus the newest maxDataRows log entries.
+    return Math.max(0, totalUsedRows - 1 - maxDataRows);
+}
+async function trimSyncLogRows(sheets, spreadsheetId, logSheetId) {
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `'${LOG_TAB}'!A:A`,
+    });
+    const totalUsedRows = res.data.values?.length ?? 0;
+    const rowsToDelete = getLogTrimCount(totalUsedRows);
+    if (rowsToDelete <= 0)
+        return;
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+            requests: [
+                {
+                    deleteDimension: {
+                        range: {
+                            sheetId: logSheetId,
+                            dimension: "ROWS",
+                            startIndex: 1,
+                            endIndex: 1 + rowsToDelete,
+                        },
+                    },
+                },
+            ],
+        },
+    });
+    console.log(`  Sync log: trimmed ${rowsToDelete} old row(s); keeping latest ${LOG_MAX_DATA_ROWS}`);
+}
 /**
  * Append a sync result row to the Log tab.
  * Creates the tab with headers if it doesn't exist.
+ * Keeps only the latest 500 log entries, plus the header row.
  */
 export async function logSyncResult(spreadsheetId, entry) {
     if (!spreadsheetId) {
@@ -468,12 +502,13 @@ export async function logSyncResult(spreadsheetId, entry) {
     // Check if Log tab exists; create if not
     const meta = await sheets.spreadsheets.get({
         spreadsheetId,
-        fields: "sheets.properties.title",
+        fields: "sheets.properties(sheetId,title)",
     });
-    const tabExists = meta.data.sheets?.some((s) => s.properties?.title === LOG_TAB);
-    if (!tabExists) {
+    const logSheet = meta.data.sheets?.find((s) => s.properties?.title === LOG_TAB);
+    let logSheetId = logSheet?.properties?.sheetId;
+    if (logSheetId == null) {
         console.log("  Log tab: creating...");
-        await sheets.spreadsheets.batchUpdate({
+        const addRes = await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
             requestBody: {
                 requests: [
@@ -481,6 +516,7 @@ export async function logSyncResult(spreadsheetId, entry) {
                 ],
             },
         });
+        logSheetId = addRes.data.replies?.[0]?.addSheet?.properties?.sheetId;
         // Write headers
         await sheets.spreadsheets.values.update({
             spreadsheetId,
@@ -509,6 +545,12 @@ export async function logSyncResult(spreadsheetId, entry) {
                 ]],
         },
     });
+    if (logSheetId != null) {
+        await trimSyncLogRows(sheets, spreadsheetId, logSheetId);
+    }
+    else {
+        console.warn("  Sync log: could not determine Log sheetId — skipping retention trim");
+    }
     console.log(`  Sync log: ${entry.status} — ${entry.tab}`);
 }
 // ---------------------------------------------------------------------------
