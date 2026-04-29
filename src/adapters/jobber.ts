@@ -591,6 +591,15 @@ function isAuthError(status: number, errorMessages: string[]): boolean {
   });
 }
 
+export function isJobberOAuthRenewRequired(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("jobber refresh token expired") ||
+    (lower.includes("jobber") && lower.includes("re-authorize")) ||
+    (lower.includes("jobber") && lower.includes("reauthorize"))
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Throttle error detection
 // ---------------------------------------------------------------------------

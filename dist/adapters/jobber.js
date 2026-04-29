@@ -493,6 +493,12 @@ function isAuthError(status, errorMessages) {
         return authPatterns.some((p) => lower.includes(p));
     });
 }
+export function isJobberOAuthRenewRequired(message) {
+    const lower = message.toLowerCase();
+    return (lower.includes("jobber refresh token expired") ||
+        (lower.includes("jobber") && lower.includes("re-authorize")) ||
+        (lower.includes("jobber") && lower.includes("reauthorize")));
+}
 // ---------------------------------------------------------------------------
 // Throttle error detection
 // ---------------------------------------------------------------------------

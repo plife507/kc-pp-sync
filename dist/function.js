@@ -6,7 +6,7 @@
  */
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
-import { fetchJobberJobsByNumbers } from "./adapters/jobber.js";
+import { fetchJobberJobsByNumbers, isJobberOAuthRenewRequired } from "./adapters/jobber.js";
 import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMonthTabs, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
@@ -1397,20 +1397,29 @@ export async function kcPPSync(req, res) {
     catch (err) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const message = err instanceof Error ? err.message : String(err);
+        const oauthRenewRequired = isJobberOAuthRenewRequired(message);
         console.error(`FATAL (${elapsed}s): ${message}`);
+        if (oauthRenewRequired) {
+            console.error("OAUTH_RENEW_REQUIRED: Jobber refresh token must be renewed before sync can continue");
+        }
         // Log failure to the sync log tab.
         const tabName = req.body?.tab ?? req.body?.mode ?? "unknown";
         const spreadsheetId = process.env.SPREADSHEET_ID ?? process.env.GOOGLE_SHEETS_DEFAULT_ID ?? "";
         await logSyncResult(spreadsheetId, {
             timestamp: new Date().toISOString(),
             tab: tabName,
-            status: "🔴 FAILED",
+            status: oauthRenewRequired ? "🔴 OAUTH RENEW REQUIRED" : "🔴 FAILED",
             jobs: 0,
             rows: 0,
             gtpRows: 0,
             elapsed: `${elapsed}s`,
             error: message.slice(0, 500),
         }).catch((e) => console.warn(`  Sync log failed: ${e}`));
-        res.status(500).json({ status: "error", elapsed: `${elapsed}s`, error: message });
+        res.status(500).json({
+            status: "error",
+            elapsed: `${elapsed}s`,
+            error: message,
+            oauthRenewRequired,
+        });
     }
 }

@@ -22,4 +22,5 @@ export declare class JobberAuth {
      */
     private persistRefreshTokenToSecretManager;
 }
+export declare function isJobberOAuthRenewRequired(message: string): boolean;
 export declare function fetchJobberJobsByNumbers(config: Config, jobNumbers: string[]): Promise<JobberPaidJob[]>;
