@@ -824,6 +824,80 @@ interface JobByNumberResponse {
   jobs: { nodes: JobByNumberNode[] };
 }
 
+const INVOICE_BY_NUMBER_QUERY = `
+query InvoiceByNumber($searchTerm: String!, $first: Int!) {
+  invoices(searchTerm: $searchTerm, first: $first) {
+    nodes {
+      invoiceNumber
+      jobberWebUri
+      invoiceStatus
+      issuedDate
+      receivedDate
+      amounts {
+        paymentsTotal
+        total
+      }
+      client { name jobberWebUri }
+      jobs(first: 10) {
+        nodes {
+          jobNumber
+          jobType
+          jobStatus
+          jobberWebUri
+          client { name jobberWebUri }
+          customFields {
+            ... on CustomFieldDropdown { label valueDropdown }
+            ... on CustomFieldTrueFalse { label valueTrueFalse }
+            ... on CustomFieldText { label valueText }
+            ... on CustomFieldNumeric { label valueNumeric }
+          }
+        }
+      }
+      archivedJobs(first: 10) {
+        nodes {
+          jobNumber
+          jobType
+          jobStatus
+          jobberWebUri
+          client { name jobberWebUri }
+          customFields {
+            ... on CustomFieldDropdown { label valueDropdown }
+            ... on CustomFieldTrueFalse { label valueTrueFalse }
+            ... on CustomFieldText { label valueText }
+            ... on CustomFieldNumeric { label valueNumeric }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+interface InvoiceByNumberJobNode {
+  jobNumber: number;
+  jobType: string | null;
+  jobStatus: string | null;
+  jobberWebUri: string | null;
+  client: { name: string; jobberWebUri: string | null } | null;
+  customFields: JobByNumberNode["customFields"];
+}
+
+interface InvoiceByNumberNode {
+  invoiceNumber: string;
+  jobberWebUri: string | null;
+  invoiceStatus: string;
+  issuedDate: string | null;
+  receivedDate: string | null;
+  amounts: { paymentsTotal: number | null; total: number } | null;
+  client: { name: string; jobberWebUri: string | null } | null;
+  jobs: { nodes: InvoiceByNumberJobNode[] };
+  archivedJobs: { nodes: InvoiceByNumberJobNode[] };
+}
+
+interface InvoiceByNumberResponse {
+  invoices: { nodes: InvoiceByNumberNode[] };
+}
+
 function extractDivision(
   customFields: JobByNumberNode["customFields"],
 ): string {
@@ -833,6 +907,17 @@ function extractDivision(
     }
   }
   return "";
+}
+
+function invoiceNumbersEqual(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = String(a ?? "").trim();
+  const right = String(b ?? "").trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const leftDigits = left.replace(/\D/g, "");
+  const rightDigits = right.replace(/\D/g, "");
+  if (!leftDigits || !rightDigits) return false;
+  return parseInt(leftDigits, 10) === parseInt(rightDigits, 10);
 }
 
 export async function fetchJobberJobsByNumbers(
@@ -911,6 +996,77 @@ export async function fetchJobberJobsByNumbers(
     }
 
     // Pace between job lookups (100ms — ThrottleManager handles budget, extra delay was redundant)
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+
+  costRef.flush();
+  return all;
+}
+
+export async function fetchJobberInvoicesByNumbers(
+  config: Config,
+  invoiceNumbers: string[],
+): Promise<JobberPaidJob[]> {
+  const auth = new JobberAuth(config.jobber.tokenPath);
+  const all: JobberPaidJob[] = [];
+  const uniqueInvoiceNumbers = [...new Set(invoiceNumbers.map(n => String(n).trim()).filter(Boolean))];
+
+  for (const invoiceNumber of uniqueInvoiceNumbers) {
+    const data = await gqlFetch<InvoiceByNumberResponse>(
+      config.jobber.apiUrl,
+      config.jobber.apiVersion,
+      auth,
+      INVOICE_BY_NUMBER_QUERY,
+      { searchTerm: invoiceNumber, first: 5 },
+    );
+
+    const matchingInvoices = data.invoices.nodes.filter((inv) =>
+      invoiceNumbersEqual(inv.invoiceNumber, invoiceNumber),
+    );
+    if (matchingInvoices.length === 0) {
+      console.warn(`  Jobber: invoice #${invoiceNumber} not found in invoice search (${data.invoices.nodes.length} candidates)`);
+    }
+
+    for (const inv of matchingInvoices) {
+      const relatedJobs = [...(inv.jobs?.nodes ?? []), ...(inv.archivedJobs?.nodes ?? [])];
+      if (relatedJobs.length === 0) {
+        all.push({
+          jobNumber: "",
+          invoiceNumber: inv.invoiceNumber,
+          invoiceWebUri: inv.jobberWebUri ?? "",
+          invoiceStatus: inv.invoiceStatus,
+          issuedDate: inv.issuedDate ?? null,
+          paidDate: inv.receivedDate ?? null,
+          amount: inv.amounts?.total ?? 0,
+          clientName: inv.client?.name ?? "",
+          division: "",
+          jobType: "",
+          jobStatus: "",
+          jobberWebUri: "",
+          clientWebUri: inv.client?.jobberWebUri ?? "",
+        });
+        continue;
+      }
+
+      for (const job of relatedJobs) {
+        all.push({
+          jobNumber: String(job.jobNumber),
+          invoiceNumber: inv.invoiceNumber,
+          invoiceWebUri: inv.jobberWebUri ?? "",
+          invoiceStatus: inv.invoiceStatus,
+          issuedDate: inv.issuedDate ?? null,
+          paidDate: inv.receivedDate ?? null,
+          amount: inv.amounts?.total ?? 0,
+          clientName: job.client?.name ?? inv.client?.name ?? "",
+          division: extractDivision(job.customFields),
+          jobType: job.jobType ?? "",
+          jobStatus: job.jobStatus ?? "",
+          jobberWebUri: job.jobberWebUri ?? "",
+          clientWebUri: job.client?.jobberWebUri ?? inv.client?.jobberWebUri ?? "",
+        });
+      }
+    }
+
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
 

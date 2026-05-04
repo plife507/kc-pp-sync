@@ -6,7 +6,7 @@
  */
 import { loadConfig, resolveMode } from "./config/env.js";
 import { fetchJobsByPurchaseOrders, parsePurchaseOrder } from "./adapters/heypros.js";
-import { fetchJobberJobsByNumbers, isJobberOAuthRenewRequired } from "./adapters/jobber.js";
+import { fetchJobberInvoicesByNumbers, fetchJobberJobsByNumbers, isJobberOAuthRenewRequired } from "./adapters/jobber.js";
 import { readOutputSheetJobNumbers, batchUpdateAutoColumns, refreshGTPTab, readRecurringTabRows, batchUpdateRecurringColumns, isNewLayout, formatLinkColumns, refreshDashboard, refreshProfitabilityDashboard, extendTabCF, renameTab, setupMonthTabs, setupMarginCF, setupClientPaidOnHoldCF, setupReleasedBelowSubInvoiceCF, getSheetsClient, assertSourceTabLayout } from "./adapters/sheets.js";
 import { HEYPROS_FILE_BASE } from "./config/constants.js";
 import { formatHeyProsId, formatDate } from "./config/types.js";
@@ -44,6 +44,15 @@ function displayInvoiceStatus(val) {
 }
 function formatAmount(cents) {
     return (cents / 100).toFixed(2);
+}
+function invoiceLookupKey(invoiceNumber) {
+    const raw = String(invoiceNumber ?? "").trim();
+    const digits = raw.replace(/\D/g, "");
+    return digits ? String(parseInt(digits, 10)) : raw.toLowerCase();
+}
+function findInvoiceRecord(records, invoiceNumber) {
+    const targetKey = invoiceLookupKey(invoiceNumber);
+    return records.find(j => invoiceLookupKey(j.invoiceNumber) === targetKey);
 }
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 /**
@@ -517,6 +526,20 @@ async function runRecurringTabFlow(config) {
         existing.push(j);
         jobberByNumber.set(j.jobNumber, existing);
     }
+    const manualInvoiceNumbers = [...new Set(rows
+            .map(r => r.invoiceNumber)
+            .filter(n => n && n !== "-"))];
+    const directInvoiceRecords = manualInvoiceNumbers.length > 0
+        ? await fetchJobberInvoicesByNumbers(config, manualInvoiceNumbers)
+        : [];
+    console.log(`  → ${directInvoiceRecords.length} direct Jobber invoice records`);
+    const invoiceByNumber = new Map();
+    for (const j of directInvoiceRecords) {
+        const key = invoiceLookupKey(j.invoiceNumber);
+        const existing = invoiceByNumber.get(key) ?? [];
+        existing.push(j);
+        invoiceByNumber.set(key, existing);
+    }
     // 3. Fetch HeyPros jobs by purchase order
     const heyProsJobs = await fetchJobsByPurchaseOrders(config, uniqueJobNumbers);
     console.log(`  → ${heyProsJobs.length} HeyPros job matches`);
@@ -587,19 +610,16 @@ async function runRecurringTabFlow(config) {
         const hpPdfUrl = hpInvoice?.file?.fileName
             ? `${HEYPROS_FILE_BASE}${hpInvoice.file.fileName}`
             : "";
-        // Pick Jobber record — for recurring, match by invoice number if provided
+        // Recurring invoice fields are keyed only by the manual Invoice # in L.
+        // Job and HeyPros WO fields are independent and still use job/date matching.
         const isRecurringManualHold = invoiceNumber === "-";
         let inv;
         if (invoiceNumber && !isRecurringManualHold) {
-            // Match by specific invoice number
-            inv = jobberRecords.find(j => j.invoiceNumber === invoiceNumber);
-            if (!inv) {
-                // Try without leading zeros or other normalization
-                inv = jobberRecords.find(j => parseInt(j.invoiceNumber, 10) === parseInt(invoiceNumber, 10));
-            }
+            const directMatches = invoiceByNumber.get(invoiceLookupKey(invoiceNumber)) ?? [];
+            inv = directMatches[0] ?? findInvoiceRecord(jobberRecords, invoiceNumber);
         }
-        // For job-level fields, use any Jobber record for this job
-        const jobRecord = jobberRecords.length > 0 ? jobberRecords[0] : undefined;
+        // For job-level fields, use the Jobber job record for this row.
+        const jobRecord = jobberRecords.length > 0 ? jobberRecords[0] : inv;
         const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
         const values = {
             // Date from HeyPros (installationStarts = visit/service date)
@@ -661,7 +681,7 @@ async function runRecurringTabFlow(config) {
             plainParts.push(`⚠️ Unknown status '${uinv.status?.label}': $${(uinv.amount / 100).toFixed(2)}`);
         if (!heyPros)
             plainParts.push("⚠️ WO# not found in HeyPros");
-        if (jobberRecords.length === 0)
+        if (!jobRecord)
             plainParts.push("⚠️ Job# not found in Jobber");
         if (invoiceNumber && !isRecurringManualHold && !inv)
             plainParts.push(`⚠️ Invoice #${invoiceNumber} not found in Jobber`);

@@ -24,3 +24,4 @@ export declare class JobberAuth {
 }
 export declare function isJobberOAuthRenewRequired(message: string): boolean;
 export declare function fetchJobberJobsByNumbers(config: Config, jobNumbers: string[]): Promise<JobberPaidJob[]>;
+export declare function fetchJobberInvoicesByNumbers(config: Config, invoiceNumbers: string[]): Promise<JobberPaidJob[]>;
