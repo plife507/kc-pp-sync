@@ -5,6 +5,7 @@ import {
   AUTO_COL_LETTERS_NEW,
   buildReleasedBelowSubInvoiceFormula,
   getLogTrimCount,
+  groupRecurringRowsByInvoice,
   validateSourceTabHeader,
 } from "../src/adapters/sheets.js";
 
@@ -546,32 +547,78 @@ describe("parseTabMonth", () => {
     assert.equal(parseTabMonth("InvalidMonth 2026"), null);
   });
 
-  it("filters WOs to target month (UTC)", () => {
+  function isInLATabMonth(installationStarts: string | null, tabMonth: { month: number; year: number }): boolean {
+    if (!installationStarts) return true;
+    const d = new Date(installationStarts);
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      month: "numeric",
+      year: "numeric",
+    }).formatToParts(d);
+    const month = parseInt(parts.find(p => p.type === "month")?.value ?? "", 10) - 1;
+    const year = parseInt(parts.find(p => p.type === "year")?.value ?? "", 10);
+    return month === tabMonth.month && year === tabMonth.year;
+  }
+
+  it("filters WOs to target month using LA service date", () => {
     const wos = [
-      { installationStarts: "2026-02-23T00:00:00Z", hashidNumeric: "A" }, // Feb
-      { installationStarts: "2026-03-06T00:00:00Z", hashidNumeric: "B" }, // Mar
+      { installationStarts: "2026-02-23T08:00:00Z", hashidNumeric: "A" }, // Feb in LA
+      { installationStarts: "2026-03-06T08:00:00Z", hashidNumeric: "B" }, // Mar in LA
       { installationStarts: null, hashidNumeric: "C" }, // no date — always include
     ];
     const tabMonth = { month: 2, year: 2026 }; // March
-    const filtered = wos.filter(wo => {
-      if (!wo.installationStarts) return true;
-      const d = new Date(wo.installationStarts);
-      return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
-    });
+    const filtered = wos.filter(wo => isInLATabMonth(wo.installationStarts, tabMonth));
     assert.equal(filtered.length, 2);
     assert.equal(filtered[0].hashidNumeric, "B");
     assert.equal(filtered[1].hashidNumeric, "C");
   });
 
+  it("keeps late LA visits in April even when UTC timestamp is May", () => {
+    const wos = [
+      { installationStarts: "2026-05-01T04:30:00Z", hashidNumeric: "A" }, // Apr 30 9:30pm LA
+      { installationStarts: "2026-05-01T08:00:00Z", hashidNumeric: "B" }, // May 1 1:00am LA
+    ];
+    const april = { month: 3, year: 2026 };
+    const filtered = wos.filter(wo => isInLATabMonth(wo.installationStarts, april));
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].hashidNumeric, "A");
+  });
+
   it("WO with null installationStarts is always included", () => {
     const wos = [{ installationStarts: null, hashidNumeric: "N" }];
     const tabMonth = { month: 2, year: 2026 };
-    const filtered = wos.filter(wo => {
-      if (!wo.installationStarts) return true;
-      const d = new Date(wo.installationStarts);
-      return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
-    });
+    const filtered = wos.filter(wo => isInLATabMonth(wo.installationStarts, tabMonth));
     assert.equal(filtered.length, 1);
+  });
+});
+
+describe("Recurring invoice profitability grouping", () => {
+  const weekKey = (dateStr: string) => dateStr;
+
+  it("skips rows without a manual invoice number", () => {
+    const groups = groupRecurringRowsByInvoice([
+      { invoiceNum: "", invoiceTotal: "$500.00", invoiceStatus: "Paid", labor: "$100.00", dateStr: "2026-04-01" },
+      { invoiceNum: "-", invoiceTotal: "$500.00", invoiceStatus: "Paid", labor: "$100.00", dateStr: "2026-04-01" },
+    ], weekKey);
+
+    assert.equal(groups.length, 0);
+  });
+
+  it("groups multiple recurring jobs under one invoice and sums labor once", () => {
+    const groups = groupRecurringRowsByInvoice([
+      { invoiceNum: "50616", invoiceTotal: "$3,102.36", invoiceStatus: "Paid", labor: "$75.00", dateStr: "2026-04-18" },
+      { invoiceNum: "INV-050616", invoiceTotal: "$3,102.36", invoiceStatus: "Paid", labor: "$85.00", dateStr: "2026-04-24" },
+      { invoiceNum: "50643", invoiceTotal: "$125.00", invoiceStatus: "Awaiting Payment", labor: "$75.00", dateStr: "2026-04-24" },
+    ], weekKey);
+
+    assert.equal(groups.length, 2);
+    assert.equal(groups[0].invoiceNum, "50616");
+    assert.equal(groups[0].invoiceTotal, 3102.36);
+    assert.equal(groups[0].clientPaid, true);
+    assert.equal(groups[0].labor, 160);
+    assert.equal(groups[0].visits, 2);
+    assert.equal(groups[0].weekKey, "2026-04-18");
+    assert.equal(groups[1].clientPaid, false);
   });
 });
 

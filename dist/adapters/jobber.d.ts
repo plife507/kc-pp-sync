@@ -18,7 +18,8 @@ export declare class JobberAuth {
     /**
      * Write rotated refresh token to Secret Manager (GCP).
      * Uses ADC (Application Default Credentials) via googleapis.
-     * Secret: projects/823212137840/secrets/JOBBER_REFRESH_TOKEN
+     * Defaults to JOBBER_REFRESH_TOKEN, but can be overridden so this service
+     * does not rotate shared Jobber credentials.
      */
     private persistRefreshTokenToSecretManager;
 }

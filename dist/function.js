@@ -85,6 +85,39 @@ function parseTabMonth(tabName) {
     }
     return null;
 }
+function getDatePartsInTimeZone(iso, timeZone) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime()))
+        return null;
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        month: "numeric",
+        day: "numeric",
+        year: "numeric",
+    }).formatToParts(d);
+    const month = parseInt(parts.find(p => p.type === "month")?.value ?? "", 10);
+    const day = parseInt(parts.find(p => p.type === "day")?.value ?? "", 10);
+    const year = parseInt(parts.find(p => p.type === "year")?.value ?? "", 10);
+    if (!month || !day || !year)
+        return null;
+    return { month: month - 1, day, year };
+}
+function isHeyProsWOInTargetMonth(wo, tabMonth) {
+    if (!tabMonth || !wo.installationStarts)
+        return true;
+    const parts = getDatePartsInTimeZone(wo.installationStarts, "America/Los_Angeles");
+    if (!parts)
+        return true;
+    return parts.month === tabMonth.month && parts.year === tabMonth.year;
+}
+function formatHeyProsServiceDate(iso) {
+    if (!iso)
+        return "";
+    const parts = getDatePartsInTimeZone(iso, "America/Los_Angeles");
+    if (!parts)
+        return iso;
+    return `${parts.month + 1}/${parts.day}/${parts.year}`;
+}
 /**
  * Option C flow: source-sheet driven sync.
  * Reads job numbers from the output sheet, fetches data, and batch-updates auto columns only.
@@ -145,15 +178,11 @@ async function runSourceSheetFlow(config) {
     for (const { rowIndex, jobNumber, existingInvoiceValue } of outputRows) {
         const jobberRecords = jobberByNumber.get(jobNumber) ?? [];
         const heyProsList = heyProsByPO.get(jobNumber) ?? [];
-        // Filter WOs to those whose installationStarts falls within the target month.
-        // WOs with no installationStarts are always included (conservative).
+        // Filter WOs by the LA service date. HeyPros stores timestamps; late California
+        // visits can cross into the next UTC date/month while still belonging to the
+        // prior local service day.
         const filteredList = tabMonth
-            ? heyProsList.filter(wo => {
-                if (!wo.installationStarts)
-                    return true;
-                const d = new Date(wo.installationStarts);
-                return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
-            })
+            ? heyProsList.filter(wo => isHeyProsWOInTargetMonth(wo, tabMonth))
             : heyProsList;
         const hpIdx = heyProsAssignmentIndex.get(jobNumber) ?? 0;
         const heyPros = hpIdx < filteredList.length ? filteredList[hpIdx] : undefined;
@@ -192,7 +221,7 @@ async function runSourceSheetFlow(config) {
         const isManualInvoiceHold = !useNewLayout && existingInvoiceValue === "-";
         // Common fields (same columns in both layouts: A–L)
         const values = {
-            A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
+            A: formatHeyProsServiceDate(heyPros?.installationStarts),
             C: "", // Margin % placeholder (filled in Phase 3)
             D: contractor?.companyName ?? "",
             E: contractor ? `${contractor.firstName} ${contractor.lastName}`.trim() : "",
@@ -570,12 +599,7 @@ async function runRecurringTabFlow(config) {
         });
         // Filter to tab month if we could parse it
         if (tabMonth) {
-            const filtered = list.filter(wo => {
-                if (!wo.installationStarts)
-                    return true;
-                const d = new Date(wo.installationStarts);
-                return d.getUTCMonth() === tabMonth.month && d.getUTCFullYear() === tabMonth.year;
-            });
+            const filtered = list.filter(wo => isHeyProsWOInTargetMonth(wo, tabMonth));
             heyProsByPO.set(po, filtered);
         }
     }
@@ -623,7 +647,7 @@ async function runRecurringTabFlow(config) {
         const contractor = heyPros?.ostensibleWinnerUser ?? heyPros?.attachedContractors?.[0] ?? null;
         const values = {
             // Date from HeyPros (installationStarts = visit/service date)
-            A: heyPros?.installationStarts ? formatDate(heyPros.installationStarts) : "",
+            A: formatHeyProsServiceDate(heyPros?.installationStarts),
             // Job-level fields (from Jobber job, not invoice-specific)
             C: contractor?.companyName ?? "",
             D: contractor ? `${contractor.firstName} ${contractor.lastName}`.trim() : "",

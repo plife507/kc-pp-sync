@@ -441,7 +441,8 @@ export class JobberAuth {
     /**
      * Write rotated refresh token to Secret Manager (GCP).
      * Uses ADC (Application Default Credentials) via googleapis.
-     * Secret: projects/823212137840/secrets/JOBBER_REFRESH_TOKEN
+     * Defaults to JOBBER_REFRESH_TOKEN, but can be overridden so this service
+     * does not rotate shared Jobber credentials.
      */
     async persistRefreshTokenToSecretManager() {
         try {
@@ -455,7 +456,8 @@ export class JobberAuth {
                 console.warn("  Jobber: no access token from ADC — skipping Secret Manager update");
                 return;
             }
-            const secretName = "projects/823212137840/secrets/JOBBER_REFRESH_TOKEN";
+            const secretName = process.env.JOBBER_REFRESH_TOKEN_SECRET_NAME ??
+                "projects/823212137840/secrets/JOBBER_REFRESH_TOKEN";
             const payload = Buffer.from(this.tokens.refresh_token).toString("base64");
             const res = await fetch(`https://secretmanager.googleapis.com/v1/${secretName}:addVersion`, {
                 method: "POST",

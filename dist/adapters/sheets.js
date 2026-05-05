@@ -619,6 +619,44 @@ function parseDollarAmount(val) {
     const num = parseFloat(cleaned);
     return isNaN(num) ? 0 : num;
 }
+function recurringInvoiceKey(invoiceNum) {
+    const raw = invoiceNum.trim();
+    const digits = raw.replace(/\D/g, "");
+    return digits ? String(parseInt(digits, 10)) : raw.toLowerCase();
+}
+export function groupRecurringRowsByInvoice(rows, getWeekKey) {
+    const groups = new Map();
+    for (const row of rows) {
+        const invoiceNum = row.invoiceNum.trim();
+        if (!invoiceNum || invoiceNum === "-")
+            continue;
+        const key = recurringInvoiceKey(invoiceNum);
+        let group = groups.get(key);
+        const invoiceTotal = parseDollarAmount(row.invoiceTotal);
+        const weekKey = getWeekKey(row.dateStr);
+        if (!group) {
+            group = {
+                invoiceNum,
+                invoiceTotal,
+                clientPaid: row.invoiceStatus.trim().toLowerCase() === "paid",
+                labor: 0,
+                visits: 0,
+                weekKey,
+            };
+            groups.set(key, group);
+        }
+        else {
+            group.clientPaid = group.clientPaid || row.invoiceStatus.trim().toLowerCase() === "paid";
+            if (group.invoiceTotal === 0 && invoiceTotal > 0)
+                group.invoiceTotal = invoiceTotal;
+            if (weekKey && (!group.weekKey || weekKey < group.weekKey))
+                group.weekKey = weekKey;
+        }
+        group.labor += parseDollarAmount(row.labor);
+        group.visits++;
+    }
+    return Array.from(groups.values());
+}
 /**
  * Refresh the Dashboard tab with payment completion stats across all month tabs.
  * Reads all active month + recurring tabs, aggregates by month, writes summary.
@@ -1121,9 +1159,9 @@ export async function refreshDashboard(spreadsheetId) {
  *   Labor = Sub Invoice Amount (col P new / col R legacy / col R recurring).
  *   Only counted when the row passes the invoice gate above.
  *
- *   Recurring margin note: one Jobber invoice often covers multiple visits (rows).
- *   Use "# Recurring Invoices" + "# Recurring Visits" to understand visits-per-invoice
- *   before drawing margin conclusions on recurring jobs.
+ *   Recurring margin note: recurring tabs are invoice-first. Rows without a manual
+ *   invoice number are skipped. One Jobber invoice can cover multiple visits/jobs,
+ *   so revenue is counted once and all sub invoice amounts under that invoice are summed.
  *
  *   Margin % = (Total Revenue - Total Labor) / Total Revenue.
  *   NOTE: Hybrid margin is understated — KC's own cost of labor is not yet tracked.
@@ -1421,11 +1459,9 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         }
         // --- Recurring tab ---
         // Layout: A=Date(0), F=Job#(5), L=Invoice#(11), M=TotalInvoiced(12), O=InvoiceStatus(14), R=SubInvAmt(17)
-        // Invoice gate: col L must be a real invoice number (not blank, not "-")
-        // Revenue gate: InvoiceStatus(O) = "Paid"
-        // Dedup revenue by Invoice # (one billing cycle invoice covers multiple visits)
-        // Track both visit count and invoice count — one invoice spans multiple visits,
-        // so visits-per-invoice context is needed for margin analysis.
+        // Invoice gate: col L must be a real invoice number (not blank, not "-").
+        // Group by manual Invoice # first: one recurring client invoice can cover multiple jobs/visits.
+        // Revenue is counted once per invoice; labor is the sum of every sub invoice row under that invoice.
         if (hasRecurring) {
             try {
                 const res = await sheets.spreadsheets.values.get({
@@ -1433,53 +1469,42 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
                     range: `'${m.recurringTab}'!A2:U500`,
                 });
                 const rows = (res.data.values ?? []);
-                // Single pass: track visits + labor per row, revenue dedup by Invoice # (monthly + weekly)
-                const seenPaidInvoices = new Set();
-                const seenUnpaidInvoices = new Set();
+                const recurringRows = [];
                 for (const row of rows) {
                     const jobNum = (row[5] ?? "").toString().trim();
                     if (!jobNum)
                         continue;
-                    const invoiceNum = (row[11] ?? "").toString().trim();
-                    if (!invoiceNum || invoiceNum === "-")
-                        continue;
-                    const invTotal = (row[12] ?? "").toString().trim();
-                    const invStatus = (row[14] ?? "").toString().trim();
-                    const labor = parseDollarAmount((row[17] ?? "").toString());
-                    const clientPaid = invStatus.toLowerCase() === "paid";
-                    const dateStr = (row[0] ?? "").toString().trim();
-                    const weekKey = getWeekSunday(dateStr);
-                    recurringVisits++;
-                    seenRecurringInvoices.add(invoiceNum);
-                    if (weekKey) {
-                        const wk = getOrCreateWeek(weekKey);
-                        wk.recurringVisits++;
-                        wk.recurringInvoices.add(invoiceNum);
+                    recurringRows.push({
+                        invoiceNum: (row[11] ?? "").toString().trim(),
+                        invoiceTotal: (row[12] ?? "").toString().trim(),
+                        invoiceStatus: (row[14] ?? "").toString().trim(),
+                        labor: (row[17] ?? "").toString().trim(),
+                        dateStr: (row[0] ?? "").toString().trim(),
+                    });
+                }
+                for (const group of groupRecurringRowsByInvoice(recurringRows, getWeekSunday)) {
+                    recurringVisits += group.visits;
+                    seenRecurringInvoices.add(group.invoiceNum);
+                    if (group.weekKey) {
+                        const wk = getOrCreateWeek(group.weekKey);
+                        wk.recurringVisits += group.visits;
+                        wk.recurringInvoices.add(group.invoiceNum);
                     }
-                    // Only count when client has paid AND sub invoice amount is populated
-                    if (clientPaid && labor > 0) {
-                        recurringLabor += labor;
-                        if (weekKey)
-                            getOrCreateWeek(weekKey).recurringLabor += labor;
-                        // Revenue: dedup by Invoice # — monthly
-                        if (!seenPaidInvoices.has(invoiceNum)) {
-                            seenPaidInvoices.add(invoiceNum);
-                            recurringRevenue += parseDollarAmount(invTotal);
-                        }
-                        // Revenue: dedup by Invoice # — per-week
-                        if (weekKey) {
-                            const wk = getOrCreateWeek(weekKey);
-                            if (!wk.recurringInvoices.has(`paid:${invoiceNum}`)) {
-                                wk.recurringInvoices.add(`paid:${invoiceNum}`);
-                                wk.recurringRevenue += parseDollarAmount(invTotal);
-                            }
+                    // Only count margin when the invoice is paid and sub expense is populated.
+                    if (group.clientPaid && group.labor > 0 && group.invoiceTotal > 0) {
+                        recurringLabor += group.labor;
+                        recurringRevenue += group.invoiceTotal;
+                        if (group.weekKey) {
+                            const wk = getOrCreateWeek(group.weekKey);
+                            wk.recurringLabor += group.labor;
+                            wk.recurringRevenue += group.invoiceTotal;
+                            wk.recurringInvoices.add(`paid:${group.invoiceNum}`);
                         }
                     }
-                    else if (!seenUnpaidInvoices.has(invoiceNum)) {
-                        seenUnpaidInvoices.add(invoiceNum);
+                    else {
                         recurringExcluded++;
-                        if (weekKey)
-                            getOrCreateWeek(weekKey).recurringExcluded.add(invoiceNum);
+                        if (group.weekKey)
+                            getOrCreateWeek(group.weekKey).recurringExcluded.add(group.invoiceNum);
                     }
                 }
             }
@@ -1517,10 +1542,10 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
     //  E  # One-off Jobs     (unique Job# count, invoiced + paid)
     //  F  # One-off Excluded (invoiced but not paid — excluded from revenue/margin)
     //  --- RECURRING (- R tabs) ---
-    //  G  Recurring Revenue  (paid invoices only, deduped by Invoice# per week)
-    //  H  Recurring Labor    (invoiced + paid rows)
+    //  G  Recurring Revenue  (paid invoices only, counted once by Invoice#)
+    //  H  Recurring Labor    (summed sub invoice rows grouped by Invoice#)
     //  I  Recurring Margin % (rev-labor)/rev
-    //  J  # Recur. Visits    (total invoiced rows)
+    //  J  # Recur. Visits    (invoiced rows assigned to their invoice bucket)
     //  K  # Recur. Invoices  (unique Invoice# — includes unpaid, for context)
     //  L  # Recur. Excluded  (unique unpaid Invoice# excluded from revenue)
     //  --- HYBRID (main tab, Division = "Hybrid") ---
@@ -1618,7 +1643,7 @@ export async function refreshProfitabilityDashboard(spreadsheetId) {
         ["  Labor      — Sub Invoice Amount (col P/R). Counted only when client has paid AND sub invoice amount > $0 (same gate as revenue). Jobs with $0 or blank sub invoice are excluded — sub cost not yet entered."],
         ["  One-off    — Division = 'Subcontractor - Dayshift' (or unrecognised). Revenue deduped by Job # to prevent double-counting multi-contractor jobs."],
         ["  Hybrid     — Division = 'Hybrid'. KC in-house labor + one or more PPs on the same job. ⚠️ Margin is a ceiling — KC's own cost of labor is not yet tracked (coming with Hybrid tab)."],
-        ["  Recurring  — Jobs on the {Month} - R tabs. Revenue deduped by Invoice # (one billing cycle invoice covers multiple visits). # Recur. Visits = total invoiced rows; # Recur. Invoices = unique invoices. Divide visits by invoices to understand avg visits per billing cycle. Recurring margin is per-invoice — for per-visit margin, divide by visits/invoices ratio."],
+        ["  Recurring  — Jobs on the {Month} - R tabs. Rows without a manual Invoice # are skipped. Revenue is counted once per Invoice #, and labor is the sum of all sub invoice rows tied to that invoice. Weekly recurring buckets use the invoice's earliest service week."],
         ["  Hybrid     — Division = 'Hybrid' on main tabs. Revenue and labor tracked separately; NOT included in Totals (different cost structure — KC in-house labor not tracked here). Hybrid margin TBD in a future update."],
         ["  # Excluded — Invoiced rows where the client has not yet paid. Both revenue AND labor are excluded. This shows jobs completed but not yet billable for profitability."],
         ["  Margin %   — Shown per category (One-off, Recurring). Total Margin % = (One-off + Recurring Paid - Labor) / Paid. Hybrid excluded from totals."],

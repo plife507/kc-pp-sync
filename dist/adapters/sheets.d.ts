@@ -89,6 +89,22 @@ export declare function getLogTrimCount(totalUsedRows: number, maxRows?: number)
  * Keeps the Log sheet capped to 500 total rows, including the header.
  */
 export declare function logSyncResult(spreadsheetId: string, entry: SyncLogEntry): Promise<void>;
+export interface RecurringProfitabilityRow {
+    invoiceNum: string;
+    invoiceTotal: string;
+    invoiceStatus: string;
+    labor: string;
+    dateStr: string;
+}
+export interface RecurringProfitabilityInvoiceGroup {
+    invoiceNum: string;
+    invoiceTotal: number;
+    clientPaid: boolean;
+    labor: number;
+    visits: number;
+    weekKey: string | null;
+}
+export declare function groupRecurringRowsByInvoice(rows: RecurringProfitabilityRow[], getWeekKey: (dateStr: string) => string | null): RecurringProfitabilityInvoiceGroup[];
 /**
  * Refresh the Dashboard tab with payment completion stats across all month tabs.
  * Reads all active month + recurring tabs, aggregates by month, writes summary.
@@ -121,9 +137,9 @@ export declare function refreshDashboard(spreadsheetId: string): Promise<number>
  *   Labor = Sub Invoice Amount (col P new / col R legacy / col R recurring).
  *   Only counted when the row passes the invoice gate above.
  *
- *   Recurring margin note: one Jobber invoice often covers multiple visits (rows).
- *   Use "# Recurring Invoices" + "# Recurring Visits" to understand visits-per-invoice
- *   before drawing margin conclusions on recurring jobs.
+ *   Recurring margin note: recurring tabs are invoice-first. Rows without a manual
+ *   invoice number are skipped. One Jobber invoice can cover multiple visits/jobs,
+ *   so revenue is counted once and all sub invoice amounts under that invoice are summed.
  *
  *   Margin % = (Total Revenue - Total Labor) / Total Revenue.
  *   NOTE: Hybrid margin is understated — KC's own cost of labor is not yet tracked.
